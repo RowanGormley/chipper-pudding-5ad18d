@@ -1,0 +1,65 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Fredoka:wght@400;500;600;700&family=Hanken+Grotesk:wght@400;500;600;700;800&display=swap');
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: "Hanken Grotesk", system-ui, sans-serif;
+  background: #e7ddcd;
+  color: #1a1a22;
+}
+
+::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.leaflet-container {
+  background: #eaece3;
+  font-family: "DM Mono", monospace;
+}
+
+.leaflet-control-attribution {
+  font-size: 8px;
+  background: rgba(255, 253, 248, 0.7);
+}
+
+@keyframes ff-spin { to { transform: rotate(360deg); } }
+@keyframes ff-up { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes ff-sheet { from { transform: translateY(100%); } to { transform: translateY(0); } }
+@keyframes ff-scrim { from { opacity: 0; } to { opacity: 1; } }
+@keyframes ff-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+@keyframes ff-scan { 0% { top: 8%; } 100% { top: 92%; } }
+@keyframes ff-pop { from { opacity: 0; transform: scale(0.9); } to { opacity: 1; transform: scale(1); } }
+
+/* The original design used a "style-active"/"style-hover"/"style-focus" DSL
+   attribute to apply pseudo-class styles inline. Real CSS needs actual
+   pseudo-classes, so those become utility classes; the per-button scale
+   amount is passed through the --press-scale custom property. */
+.press {
+  transition: transform 0.08s;
+}
+.press:active {
+  transform: scale(var(--press-scale, 0.97));
+}
+
+.filter-chip:hover {
+  border-color: #e2b48f;
+}
+
+.text-input:focus {
+  outline: none;
+  border-color: #ec6a1f;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
