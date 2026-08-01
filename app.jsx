@@ -364,28 +364,33 @@ Return ONLY a JSON array of exactly 5 objects: [{"id":"...","why":"...","blurb":
     }
     this.stopCam();
     this.setState({ whats: "loading", whatsPhoto: url });
-    this.simulateId();
+    this.identifyPhoto(url);
   }
-  async simulateId() {
+  // Sends the captured photo to our own /api/identify endpoint (a small
+  // server-side function — see api/identify.js) which forwards it to
+  // Claude's vision API. The API key never touches the browser.
+  async identifyPhoto(photoDataUrl) {
     const loc = this.state.location || "your area";
     const fallback = {
-      title: "Simulated result",
-      type: "Demo mode",
-      blurb: `This is a preview of the scanner. With a vision-enabled key it would identify whatever you point at around ${loc}.`,
-      facts: ["Point at a building, dish, statue or sign.", "Real identification needs a vision API key.", "The photo above is real — this text is a placeholder."],
+      title: "Couldn't identify that",
+      type: "No result",
+      blurb: "The scan didn't come back with a clear answer. Try a closer, better-lit photo of the thing you're curious about.",
+      facts: ["Point at a building, dish, statue or sign.", "Good lighting and a steady shot help a lot.", "You can always try again."],
     };
+    if (!photoDataUrl) { this.setState({ whats: "result", whatsResult: fallback }); return; }
     try {
-      if (!window.claude || typeof window.claude.complete !== "function") throw new Error("no AI bridge available");
-      const raw = await window.claude.complete({
-        messages: [{ role: "user", content: `Write a SHORT playful EXAMPLE of what a "point your camera at a landmark" scanner might say for a traveller near ${loc}. It is clearly a demo. Reply ONLY JSON: {"title":"a plausible well-known sight near ${loc}","type":"short label with era or category","blurb":"2 warm sentences ~35 words","facts":["3 short punchy facts"]}` }],
-        max_tokens: 500,
+      const res = await fetch("/api/identify", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ imageDataUrl: photoDataUrl, location: loc }),
       });
-      const m = raw.match(/\{[\s\S]*\}/);
-      const r = JSON.parse(m ? m[0] : raw);
-      if (!r.title || !Array.isArray(r.facts)) throw new Error("bad");
-      setTimeout(() => this.setState({ whats: "result", whatsResult: r }), 900);
+      if (!res.ok) throw new Error("identify request failed: " + res.status);
+      const r = await res.json();
+      if (!r.title || !Array.isArray(r.facts)) throw new Error("unexpected response shape");
+      this.setState({ whats: "result", whatsResult: r });
     } catch (e) {
-      setTimeout(() => this.setState({ whats: "result", whatsResult: fallback }), 900);
+      console.warn("identifyPhoto failed", e);
+      this.setState({ whats: "result", whatsResult: fallback });
     }
   }
 
@@ -665,10 +670,8 @@ Return ONLY a JSON array of exactly 5 objects: [{"id":"...","why":"...","blurb":
                 <div style={{ position: "relative", width: "100%", aspectRatio: "16/10", borderRadius: 22, overflow: "hidden", background: "#16161d", animation: "ff-pop 0.4s ease" }}>
                   {s.whatsPhoto && <img src={s.whatsPhoto} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />}
                   <div style={{ position: "absolute", top: 12, left: 12, fontFamily: "'DM Mono'", fontSize: 11, color: "#fffdf8", background: "rgba(0,0,0,0.45)", padding: "4px 9px", borderRadius: 8 }}>your photo</div>
-                  <div style={{ position: "absolute", bottom: 12, right: 12, display: "inline-flex", alignItems: "center", gap: 6, background: "#17171f", color: "#fffdf8", fontFamily: "'DM Mono'", fontSize: 11, padding: "6px 11px", borderRadius: 20 }}><span style={{ width: 7, height: 7, borderRadius: "50%", background: "#fbbf24" }} /> simulated</div>
                 </div>
-                <div style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#fbe7d8", color: "#c2591b", fontFamily: "'DM Mono'", fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.06em", padding: "5px 10px", borderRadius: 20, margin: "16px 0 0" }}>Demo — not a real identification</div>
-                <h2 style={{ fontFamily: "'Fredoka'", fontWeight: 600, fontSize: 26, letterSpacing: "-0.01em", margin: "10px 0 4px", color: "#1a1a22" }}>{r.title}</h2>
+                <h2 style={{ fontFamily: "'Fredoka'", fontWeight: 600, fontSize: 26, letterSpacing: "-0.01em", margin: "16px 0 4px", color: "#1a1a22" }}>{r.title}</h2>
                 <div style={{ fontFamily: "'DM Mono'", fontSize: 12, color: "#ec6a1f", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 14 }}>{r.type}</div>
                 <p style={{ fontSize: 15.5, lineHeight: 1.5, color: "#4b463d", margin: "0 0 18px" }}>{r.blurb}</p>
                 <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
