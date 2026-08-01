@@ -713,12 +713,7 @@ Return ONLY this JSON shape, no markdown fences:
     const allRecs = s.recs || [];
     const filtered = s.category === "All" ? allRecs : allRecs.filter(p => p.category === s.category);
     const cards = filtered.map(p => this.cardFor(p, allRecs.indexOf(p)));
-    const present = new Set(allRecs.map(p => p.category));
-    const tabList = ["All", ...CATS.filter(c => c !== "All" && present.has(c))];
-    const tabs = tabList.length > 1 ? tabList : ["All"];
     const locationText = s.location ? s.location.split(",")[0] : "Set location";
-    const whenText = `${this.fmtTime(s.clock)} ${this.weekday(s.clock)} ${s.period}`;
-    const walkText = `${s.walkMins} min walk`;
     const showListView = !s.recsLoading && !s.recsError && s.view === "list";
     const showMapView = !s.recsLoading && !s.recsError && s.view === "map";
 
@@ -726,22 +721,13 @@ Return ONLY this JSON shape, no markdown fences:
       <div style={S.screen}>
         <div style={{ padding: "8px 26px 0", flexShrink: 0 }}>
           <button style={S.backBtn} onClick={() => this.back()}><BackArrow /> Back</button>
-          <h1 style={{ fontFamily: "'Fredoka'", fontWeight: 600, fontSize: 30, lineHeight: 1.05, letterSpacing: "-0.01em", margin: "4px 0 6px", color: "#1a1a22" }}>{locationText}</h1>
+          <h1 style={{ fontFamily: "'Fredoka'", fontWeight: 600, fontSize: 30, lineHeight: 1.05, letterSpacing: "-0.01em", margin: "4px 0 14px", color: "#1a1a22" }}>{locationText}</h1>
 
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, margin: "0 0 4px" }}>
-            <div style={{ flex: 1, minWidth: 0, fontFamily: "'DM Mono'", fontSize: 12, color: "#9a9082", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{whenText} · {walkText}</div>
             <button className="press filter-chip" style={{ "--press-scale": 0.97, flexShrink: 0, cursor: "pointer", border: "1px solid #ece3d3", background: "#fffdf8", padding: "8px 14px 8px 11px", borderRadius: 14, display: "inline-flex", alignItems: "center", gap: 6 }} onClick={() => this.openFilters()}>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#ec6a1f" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><line x1="4" y1="6" x2="20" y2="6" /><circle cx="9" cy="6" r="2" fill="#fffdf8" /><line x1="4" y1="12" x2="20" y2="12" /><circle cx="16" cy="12" r="2" fill="#fffdf8" /><line x1="4" y1="18" x2="20" y2="18" /><circle cx="11" cy="18" r="2" fill="#fffdf8" /></svg>
               <span style={{ fontFamily: "'Hanken Grotesk'", fontWeight: 700, fontSize: 14, color: "#1a1a22" }}>Filter</span>
             </button>
-          </div>
-
-          <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "14px 0 4px" }}>
-            <div style={{ flex: 1, display: "flex", gap: 8, overflowX: "auto", paddingBottom: 2 }}>
-              {tabs.map(label => (
-                <button key={label} style={this.tabStyle(s.category === label)} onClick={() => this.setState({ category: label, mapSel: null })}>{label}</button>
-              ))}
-            </div>
             <div style={{ flexShrink: 0, display: "flex", background: "#17171f", borderRadius: 19, padding: 4, gap: 2 }}>
               <button style={this.toggleBtnStyle(s.view === "list")} onClick={() => this.setState({ view: "list" })}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01" /></svg> List</button>
               <button style={this.toggleBtnStyle(s.view === "map")} onClick={() => { this._fitted = false; this.setState({ view: "map", mapSel: allRecs[0] || null }); }}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 3 3.5 5v16L9 19l6 2 5.5-2V3L15 5 9 3Z" /><path d="M9 3v16M15 5v16" /></svg> Map</button>
@@ -776,7 +762,10 @@ Return ONLY this JSON shape, no markdown fences:
               <div key={c.id} style={{ marginBottom: 22 }}>
                 <h3 className="press" style={{ "--press-scale": 0.98, cursor: "pointer", fontFamily: "'Fredoka'", fontWeight: 600, fontSize: 19, margin: 0, color: "#1a1a22", letterSpacing: "-0.01em", display: "inline-block" }} onClick={c.onClick}>{c.name}</h3>
                 <div style={{ fontFamily: "'DM Mono'", fontSize: 11.5, color: "#b5ab9a", margin: "3px 0 8px" }}>{c.metaLine}</div>
-                <p style={{ fontFamily: "'Hanken Grotesk'", fontSize: 15.5, lineHeight: 1.6, color: "#4b463d", margin: 0 }}>{c.text}</p>
+                <p style={{ fontFamily: "'Hanken Grotesk'", fontSize: 15.5, lineHeight: 1.6, color: "#4b463d", margin: "0 0 8px" }}>{c.text}</p>
+                <button className="press" style={{ "--press-scale": 0.96, cursor: "pointer", border: "none", background: "none", padding: 0, display: "inline-flex", alignItems: "center", gap: 4, fontFamily: "'DM Mono'", fontWeight: 500, fontSize: 12, color: "#ec6a1f", letterSpacing: "0.03em" }} onClick={c.onClick}>
+                  More <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#ec6a1f" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M9 5l7 7-7 7" /></svg>
+                </button>
               </div>
             ))}
             <div style={{ textAlign: "center", fontFamily: "'DM Mono'", fontSize: 11, color: "#b5ab9a", padding: "8px 0 4px" }}>
@@ -889,12 +878,27 @@ Return ONLY this JSON shape, no markdown fences:
 
   renderEditorSheet() {
     const s = this.state;
+    const allRecs = s.recs || [];
+    const present = new Set(allRecs.map(p => p.category));
+    const tabList = ["All", ...CATS.filter(c => c !== "All" && present.has(c))];
+    const showCategoryPicker = tabList.length > 1;
     return (
       <React.Fragment>
         <div onClick={() => this.setState({ editor: null })} style={{ position: "absolute", inset: 0, zIndex: 70, background: "rgba(20,14,4,0.4)", animation: "ff-scrim 0.2s ease" }} />
         <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, zIndex: 71, maxHeight: "88%", background: "#fffdf8", borderRadius: "28px 28px 0 0", display: "flex", flexDirection: "column", animation: "ff-sheet 0.3s cubic-bezier(0.22,1,0.36,1)" }}>
           <div style={{ flexShrink: 0, display: "flex", justifyContent: "center", padding: "12px 0 4px" }}><div style={{ width: 42, height: 5, borderRadius: 3, background: "#e2d8c6" }} /></div>
           <div style={{ overflowY: "auto", padding: "6px 24px calc(24px + env(safe-area-inset-bottom))" }}>
+            {showCategoryPicker && (
+              <React.Fragment>
+                <h3 style={{ fontFamily: "'Fredoka'", fontWeight: 600, fontSize: 21, margin: "0 0 14px", color: "#1a1a22" }}>Category</h3>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 28 }}>
+                  {tabList.map(label => (
+                    <button key={label} style={this.tabStyle(s.category === label)} onClick={() => this.setState({ category: label, mapSel: null, editor: null })}>{label}</button>
+                  ))}
+                </div>
+              </React.Fragment>
+            )}
+
             <h3 style={{ fontFamily: "'Fredoka'", fontWeight: 600, fontSize: 21, margin: "0 0 14px", color: "#1a1a22" }}>Where are you?</h3>
             <button className="press" style={{ "--press-scale": 0.985, width: "100%", cursor: "pointer", border: "1.5px solid #ec6a1f", background: "#fbe7d8", color: "#c2591b", fontFamily: "'Fredoka'", fontWeight: 600, fontSize: 15.5, padding: 14, borderRadius: 15, display: "flex", alignItems: "center", justifyContent: "center", gap: 9, marginBottom: 14 }} onClick={() => this.useGpsFromEditor()}><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#ec6a1f" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M12 21s-7-6.3-7-11a7 7 0 0 1 14 0c0 4.7-7 11-7 11Z" /><circle cx="12" cy="10" r="2.6" /></svg> Use my current location</button>
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}><div style={{ flex: 1, height: 1, background: "#ece3d3" }} /><span style={{ fontFamily: "'DM Mono'", fontSize: 11, color: "#b5ab9a" }}>or type it</span><div style={{ flex: 1, height: 1, background: "#ece3d3" }} /></div>
