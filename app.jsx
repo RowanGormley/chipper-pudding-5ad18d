@@ -56,6 +56,7 @@ class App extends React.Component {
       routing: false,
       route: [],
       recs: null,
+      recsIntro: "",
       recsLoading: false,
       recsError: null,
       selected: null,
@@ -286,14 +287,14 @@ class App extends React.Component {
       .slice(0, 5);
     return ranked.map(({ p }) => {
       const liked = p.tags.find(t => this.state.likes.includes(t));
-      const why = liked ? `Right up your street — you're into ${liked.toLowerCase()}.` : `A ${p.type.toLowerCase()} a short walk away.`;
-      const blurb = p.blurb || `A ${p.type.toLowerCase()}${p.area ? " in " + p.area : ""}, roughly ${p.walkMins} minutes on foot from you.`;
-      return { ...p, why, blurb };
+      const opener = liked ? `Right up your street — you're into ${liked.toLowerCase()}.` : `A ${p.type.toLowerCase()} a short walk away.`;
+      const rest = p.blurb || `A ${p.type.toLowerCase()}${p.area ? " in " + p.area : ""}, roughly ${p.walkMins} minutes on foot from you.`;
+      return { ...p, text: `${opener} ${rest}` };
     });
   }
 
   async buildRecs() {
-    this.setState({ screen: "recs", recsLoading: true, recsError: null, recs: null, selected: null, category: "All", route: [], routing: false, mapSel: null, loadingText: "Picking your 5 best…" });
+    this.setState({ screen: "recs", recsLoading: true, recsError: null, recs: null, recsIntro: "", selected: null, category: "All", route: [], routing: false, mapSel: null, loadingText: "Picking your 5 best…" });
     if (!CONFIG.aiPersonalization) { setTimeout(() => this.setState({ recs: this.fallbackRecs(), recsLoading: false }), 400); return; }
 
     const s = this.state;
@@ -308,13 +309,19 @@ They DISLIKE: ${s.dislikes.join(", ")}
 Candidate places (JSON, openingHours is raw OSM opening_hours syntax or null):
 ${JSON.stringify(list)}
 
-From these candidates, pick the 5 most interesting and rank them best-first.
+From these candidates, pick the 5 most interesting and rank them best-first. Write like a
+knowledgeable local guide giving a real, informative answer — the way you'd naturally reply
+to this question in conversation, not like ad copy.
 Rules:
 - If openingHours is given, prefer places likely OPEN at the current time; avoid ones likely closed.
 - Favour their likes; avoid anything clashing with dislikes.
-- "why": one warm, specific sentence (max 18 words) explaining why it's interesting, referencing the time of day and/or a like. Talk to them ("you").
-- "blurb": 1-2 inviting sentences (max ~35 words) describing the place.
-Return ONLY a JSON array of exactly 5 objects: [{"id":"...","why":"...","blurb":"..."}]. No markdown.`;
+- "intro": one short sentence setting up the answer (don't list place names in it).
+- "text": for each place, 1-2 sentences of real, specific, informative prose about it —
+  what it is, why it's worth a look, any relevant detail (era, view, atmosphere). Don't repeat
+  the place's name inside "text", it's shown as a heading above it. Talk to them ("you") at
+  most once across all five, don't force it into every entry.
+Return ONLY this JSON shape, no markdown fences:
+{"intro":"...","places":[{"id":"...","text":"..."}]} — exactly 5 entries in "places".`;
 
     try {
       const res = await fetch("/api/recommend", {
@@ -324,15 +331,16 @@ Return ONLY a JSON array of exactly 5 objects: [{"id":"...","why":"...","blurb":
       });
       if (!res.ok) throw new Error("recommend request failed: " + res.status);
       const { raw } = await res.json();
-      const m = raw.match(/\[[\s\S]*\]/);
-      const picks = JSON.parse(m ? m[0] : raw);
+      const m = raw.match(/\{[\s\S]*\}/);
+      const parsed = JSON.parse(m ? m[0] : raw);
+      const picks = Array.isArray(parsed.places) ? parsed.places : [];
       const byId = Object.fromEntries(this.PLACES.map(p => [p.id, p]));
-      const recs = picks.map(pk => byId[pk.id] ? { ...byId[pk.id], why: pk.why, blurb: pk.blurb || byId[pk.id].blurb || "" } : null).filter(Boolean).slice(0, 5);
+      const recs = picks.map(pk => byId[pk.id] ? { ...byId[pk.id], text: pk.text || byId[pk.id].blurb || "" } : null).filter(Boolean).slice(0, 5);
       if (recs.length < 3) throw new Error("too few");
-      this.setState({ recs, recsLoading: false });
+      this.setState({ recs, recsIntro: parsed.intro || "", recsLoading: false });
     } catch (e) {
       console.warn("AI recs failed, using fallback", e);
-      this.setState({ recs: this.fallbackRecs(), recsLoading: false });
+      this.setState({ recs: this.fallbackRecs(), recsIntro: "", recsLoading: false });
     }
   }
 
@@ -398,25 +406,25 @@ Return ONLY a JSON array of exactly 5 objects: [{"id":"...","why":"...","blurb":
     }
   }
 
-  // ---------- editors ----------
-  openEditor(kind) {
-    this.setState({ editor: kind, locDraft: this.state.location, walkDraft: this.state.walkMins });
+  // ---------- filters (location / time / walk distance) ----------
+  openFilters() {
+    this.setState({ editor: "filters", locDraft: this.state.location, walkDraft: this.state.walkMins });
   }
   useGpsFromEditor() {
     this.setState({ editor: null });
     this.coords = null; this.PLACES = [];
     this.locateAndFetch();
   }
-  applyEditor() {
-    const k = this.state.editor;
-    if (k === "location") {
-      const q = (this.state.locDraft || "").trim();
-      this.setState({ editor: null });
-      if (q) this.geocodeThenFetch(q);
-      return;
-    }
-    if (k === "time") { this.setState({ editor: null }, () => { this.save(); this.buildRecs(); }); return; }
-    if (k === "walk") { this.setState({ walkMins: this.state.walkDraft, editor: null }, () => { this.save(); this.fetchThenRecs(); }); return; }
+  applyFilters() {
+    const q = (this.state.locDraft || "").trim();
+    const locationChanged = q && q !== this.state.location;
+    const walkChanged = this.state.walkDraft !== this.state.walkMins;
+    this.setState({ editor: null, walkMins: this.state.walkDraft }, () => {
+      this.save();
+      if (locationChanged) this.geocodeThenFetch(q);
+      else if (walkChanged) this.fetchThenRecs();
+      else this.buildRecs();
+    });
   }
   async geocodeThenFetch(q) {
     this.setState({ screen: "recs", recsLoading: true, recsError: null, recs: null, view: "list", loadingText: "Finding that place…" });
@@ -718,27 +726,17 @@ Return ONLY a JSON array of exactly 5 objects: [{"id":"...","why":"...","blurb":
       <div style={S.screen}>
         <div style={{ padding: "8px 26px 0", flexShrink: 0 }}>
           <button style={S.backBtn} onClick={() => this.back()}><BackArrow /> Back</button>
-          <h1 style={{ fontFamily: "'Fredoka'", fontWeight: 600, fontSize: 30, lineHeight: 1.05, letterSpacing: "-0.01em", margin: "4px 0 16px", color: "#1a1a22" }}>My 5 best<br />recommendations</h1>
+          <h1 style={{ fontFamily: "'Fredoka'", fontWeight: 600, fontSize: 30, lineHeight: 1.05, letterSpacing: "-0.01em", margin: "4px 0 6px", color: "#1a1a22" }}>{locationText}</h1>
 
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-            <button className="press filter-chip" style={{ "--press-scale": 0.97, cursor: "pointer", border: "1px solid #ece3d3", background: "#fffdf8", padding: "7px 13px 7px 8px", borderRadius: 14, display: "inline-flex", alignItems: "center", gap: 8 }} onClick={() => this.openEditor("location")}>
-              <span style={{ flexShrink: 0, width: 24, height: 24, borderRadius: 8, background: "#fbe7d8", display: "flex", alignItems: "center", justifyContent: "center" }}><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#ec6a1f" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M12 21s-7-6.3-7-11a7 7 0 0 1 14 0c0 4.7-7 11-7 11Z" /><circle cx="12" cy="10" r="2.4" /></svg></span>
-              <span style={{ fontFamily: "'Hanken Grotesk'", fontWeight: 700, fontSize: 14, color: "#1a1a22" }}>{locationText}</span>
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#c3b7a2" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M14 4l6 6M4 20l1-4L16 5l3 3L8 19l-4 1Z" /></svg>
-            </button>
-            <button className="press filter-chip" style={{ "--press-scale": 0.97, cursor: "pointer", border: "1px solid #ece3d3", background: "#fffdf8", padding: "7px 13px 7px 8px", borderRadius: 14, display: "inline-flex", alignItems: "center", gap: 8 }} onClick={() => this.openEditor("time")}>
-              <span style={{ flexShrink: 0, width: 24, height: 24, borderRadius: 8, background: "#fbe7d8", display: "flex", alignItems: "center", justifyContent: "center" }}><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#ec6a1f" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg></span>
-              <span style={{ fontFamily: "'Hanken Grotesk'", fontWeight: 700, fontSize: 14, color: "#1a1a22" }}>{whenText}</span>
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#c3b7a2" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M14 4l6 6M4 20l1-4L16 5l3 3L8 19l-4 1Z" /></svg>
-            </button>
-            <button className="press filter-chip" style={{ "--press-scale": 0.97, cursor: "pointer", border: "1px solid #ece3d3", background: "#fffdf8", padding: "7px 13px 7px 8px", borderRadius: 14, display: "inline-flex", alignItems: "center", gap: 8 }} onClick={() => this.openEditor("walk")}>
-              <span style={{ flexShrink: 0, width: 24, height: 24, borderRadius: 8, background: "#fbe7d8", display: "flex", alignItems: "center", justifyContent: "center" }}><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#ec6a1f" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="13" cy="4" r="1.6" /><path d="m9 21 1.5-6-2.5-2 1-5 3 1.5 2.5 2M8 13l-2 8M14.5 12l2 3 3 1" /></svg></span>
-              <span style={{ fontFamily: "'Hanken Grotesk'", fontWeight: 700, fontSize: 14, color: "#1a1a22" }}>{walkText}</span>
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#c3b7a2" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M14 4l6 6M4 20l1-4L16 5l3 3L8 19l-4 1Z" /></svg>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, margin: "0 0 4px" }}>
+            <div style={{ flex: 1, minWidth: 0, fontFamily: "'DM Mono'", fontSize: 12, color: "#9a9082", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{whenText} · {walkText}</div>
+            <button className="press filter-chip" style={{ "--press-scale": 0.97, flexShrink: 0, cursor: "pointer", border: "1px solid #ece3d3", background: "#fffdf8", padding: "8px 14px 8px 11px", borderRadius: 14, display: "inline-flex", alignItems: "center", gap: 6 }} onClick={() => this.openFilters()}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#ec6a1f" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><line x1="4" y1="6" x2="20" y2="6" /><circle cx="9" cy="6" r="2" fill="#fffdf8" /><line x1="4" y1="12" x2="20" y2="12" /><circle cx="16" cy="12" r="2" fill="#fffdf8" /><line x1="4" y1="18" x2="20" y2="18" /><circle cx="11" cy="18" r="2" fill="#fffdf8" /></svg>
+              <span style={{ fontFamily: "'Hanken Grotesk'", fontWeight: 700, fontSize: 14, color: "#1a1a22" }}>Filter</span>
             </button>
           </div>
 
-          <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "18px 0 4px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "14px 0 4px" }}>
             <div style={{ flex: 1, display: "flex", gap: 8, overflowX: "auto", paddingBottom: 2 }}>
               {tabs.map(label => (
                 <button key={label} style={this.tabStyle(s.category === label)} onClick={() => this.setState({ category: label, mapSel: null })}>{label}</button>
@@ -764,29 +762,21 @@ Return ONLY a JSON array of exactly 5 objects: [{"id":"...","why":"...","blurb":
             <div style={{ fontSize: 15, color: "#8a8275", maxWidth: 260, lineHeight: 1.5 }}>{s.recsError}</div>
             <div style={{ display: "flex", gap: 10 }}>
               <button style={{ cursor: "pointer", border: "none", background: "#17171f", color: "#fffdf8", fontFamily: "'Fredoka'", fontWeight: 600, fontSize: 15, padding: "12px 24px", borderRadius: 16 }} onClick={() => (this.coords ? this.fetchThenRecs() : this.locateAndFetch())}>Try again</button>
-              <button style={{ cursor: "pointer", border: "1px solid #e6ddcd", background: "#fffdf8", color: "#1a1a22", fontFamily: "'Fredoka'", fontWeight: 600, fontSize: 15, padding: "12px 24px", borderRadius: 16 }} onClick={() => this.openEditor("location")}>Type location</button>
+              <button style={{ cursor: "pointer", border: "1px solid #e6ddcd", background: "#fffdf8", color: "#1a1a22", fontFamily: "'Fredoka'", fontWeight: 600, fontSize: 15, padding: "12px 24px", borderRadius: 16 }} onClick={() => this.openFilters()}>Type location</button>
             </div>
           </div>
         )}
 
         {showListView && (
-          <div style={{ flex: 1, overflowY: "auto", padding: "12px 26px calc(24px + env(safe-area-inset-bottom))" }}>
+          <div style={{ flex: 1, overflowY: "auto", padding: "14px 26px calc(24px + env(safe-area-inset-bottom))" }}>
+            {s.recsIntro && (
+              <p style={{ fontFamily: "'Hanken Grotesk'", fontSize: 15.5, lineHeight: 1.6, color: "#4b463d", margin: "0 0 22px" }}>{s.recsIntro}</p>
+            )}
             {cards.map(c => (
-              <div key={c.id} className="press" style={{ "--press-scale": 0.99, cursor: "pointer", marginBottom: 14, background: "#fffdf8", border: "1px solid #eee5d6", borderRadius: 22, overflow: "hidden", boxShadow: "0 8px 22px -16px rgba(60,40,15,0.4)", animation: "ff-up 0.4s ease both" }} onClick={c.onClick}>
-                <div style={{ position: "relative", height: 128, background: c.imgBg }}>
-                  <div style={{ position: "absolute", inset: 0, backgroundImage: "repeating-linear-gradient(135deg, rgba(0,0,0,0.04) 0 10px, transparent 10px 20px)" }} />
-                  <div style={{ position: "absolute", top: 12, left: 12, width: 30, height: 30, borderRadius: "50%", background: "#17171f", color: "#fffdf8", fontFamily: "'Fredoka'", fontWeight: 600, fontSize: 15, display: "flex", alignItems: "center", justifyContent: "center" }}>{c.rank}</div>
-                  <button className="press" style={{ "--press-scale": 0.94, position: "absolute", top: 12, right: 12, cursor: "pointer", border: "none", background: "#17171f", color: "#fffdf8", fontFamily: "'DM Mono'", fontWeight: 500, fontSize: 10.5, padding: "6px 11px", borderRadius: 14, display: "inline-flex", alignItems: "center", gap: 5 }} onClick={c.directions}><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#ec6a1f" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M3 11l19-9-9 19-2-8-8-2Z" /></svg> Show me the way</button>
-                  <div style={{ position: "absolute", bottom: 10, left: 12, fontFamily: "'DM Mono'", fontSize: 10.5, color: "rgba(26,26,34,0.45)" }}>// {c.caption}</div>
-                </div>
-                <div style={{ padding: "14px 16px 16px" }}>
-                  <h3 style={{ fontFamily: "'Fredoka'", fontWeight: 600, fontSize: 19, margin: 0, color: "#1a1a22", letterSpacing: "-0.01em" }}>{c.name}</h3>
-                  <div style={{ fontFamily: "'DM Mono'", fontSize: 12, color: "#9a9082", margin: "5px 0 11px" }}>{c.metaLine}</div>
-                  <div style={{ display: "flex", gap: 8, alignItems: "flex-start", background: "#fbf4ea", borderRadius: 12, padding: "9px 11px" }}>
-                    <svg style={{ flexShrink: 0, marginTop: 1 }} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ec6a1f" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 1 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8Z" /></svg>
-                    <span style={{ fontSize: 13, lineHeight: 1.35, color: "#7a5a2e" }}>{c.why}</span>
-                  </div>
-                </div>
+              <div key={c.id} style={{ marginBottom: 22 }}>
+                <h3 className="press" style={{ "--press-scale": 0.98, cursor: "pointer", fontFamily: "'Fredoka'", fontWeight: 600, fontSize: 19, margin: 0, color: "#1a1a22", letterSpacing: "-0.01em", display: "inline-block" }} onClick={c.onClick}>{c.name}</h3>
+                <div style={{ fontFamily: "'DM Mono'", fontSize: 11.5, color: "#b5ab9a", margin: "3px 0 8px" }}>{c.metaLine}</div>
+                <p style={{ fontFamily: "'Hanken Grotesk'", fontSize: 15.5, lineHeight: 1.6, color: "#4b463d", margin: 0 }}>{c.text}</p>
               </div>
             ))}
             <div style={{ textAlign: "center", fontFamily: "'DM Mono'", fontSize: 11, color: "#b5ab9a", padding: "8px 0 4px" }}>
@@ -886,11 +876,7 @@ Return ONLY a JSON array of exactly 5 objects: [{"id":"...","why":"...","blurb":
                 <div style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#f4ede1", borderRadius: 12, padding: "9px 12px", fontSize: 13, fontWeight: 600, color: "#403b33" }}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#ec6a1f" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>{detail.hoursLabel}</div>
               )}
             </div>
-            <div style={{ display: "flex", gap: 9, alignItems: "flex-start", background: "#fbf4ea", borderRadius: 15, padding: "13px 15px", marginBottom: 16 }}>
-              <svg style={{ flexShrink: 0, marginTop: 2 }} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ec6a1f" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 1 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8Z" /></svg>
-              <span style={{ fontSize: 14, lineHeight: 1.4, color: "#7a5a2e" }}><b style={{ color: "#c2591b" }}>Why for you —</b> {detail.why}</span>
-            </div>
-            <p style={{ fontSize: 15.5, lineHeight: 1.55, color: "#4b463d", margin: "0 0 20px" }}>{detail.blurb}</p>
+            <p style={{ fontSize: 15.5, lineHeight: 1.55, color: "#4b463d", margin: "0 0 20px" }}>{detail.text}</p>
             <div style={{ display: "flex", gap: 10 }}>
               <button className="press" style={{ "--press-scale": 0.98, flex: 1, cursor: "pointer", border: "none", background: "#17171f", color: "#fffdf8", fontFamily: "'Fredoka'", fontWeight: 600, fontSize: 16, padding: 15, borderRadius: 16, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8 }} onClick={detail.directions}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ec6a1f" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 21s-7-6.3-7-11a7 7 0 0 1 14 0c0 4.7-7 11-7 11Z" /><circle cx="12" cy="10" r="2.6" /></svg>Directions</button>
               <button className="press" style={{ "--press-scale": 0.98, flexShrink: 0, cursor: "pointer", border: "1px solid #e6ddcd", background: "#fffdf8", color: "#1a1a22", fontFamily: "'Fredoka'", fontWeight: 600, fontSize: 16, padding: "15px 22px", borderRadius: 16 }} onClick={() => this.setState({ selected: null })}>Close</button>
@@ -906,51 +892,40 @@ Return ONLY a JSON array of exactly 5 objects: [{"id":"...","why":"...","blurb":
     return (
       <React.Fragment>
         <div onClick={() => this.setState({ editor: null })} style={{ position: "absolute", inset: 0, zIndex: 70, background: "rgba(20,14,4,0.4)", animation: "ff-scrim 0.2s ease" }} />
-        <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, zIndex: 71, background: "#fffdf8", borderRadius: "28px 28px 0 0", padding: "10px 24px calc(26px + env(safe-area-inset-bottom))", animation: "ff-sheet 0.3s cubic-bezier(0.22,1,0.36,1)" }}>
-          <div style={{ display: "flex", justifyContent: "center", padding: "6px 0 16px" }}><div style={{ width: 42, height: 5, borderRadius: 3, background: "#e2d8c6" }} /></div>
+        <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, zIndex: 71, maxHeight: "88%", background: "#fffdf8", borderRadius: "28px 28px 0 0", display: "flex", flexDirection: "column", animation: "ff-sheet 0.3s cubic-bezier(0.22,1,0.36,1)" }}>
+          <div style={{ flexShrink: 0, display: "flex", justifyContent: "center", padding: "12px 0 4px" }}><div style={{ width: 42, height: 5, borderRadius: 3, background: "#e2d8c6" }} /></div>
+          <div style={{ overflowY: "auto", padding: "6px 24px calc(24px + env(safe-area-inset-bottom))" }}>
+            <h3 style={{ fontFamily: "'Fredoka'", fontWeight: 600, fontSize: 21, margin: "0 0 14px", color: "#1a1a22" }}>Where are you?</h3>
+            <button className="press" style={{ "--press-scale": 0.985, width: "100%", cursor: "pointer", border: "1.5px solid #ec6a1f", background: "#fbe7d8", color: "#c2591b", fontFamily: "'Fredoka'", fontWeight: 600, fontSize: 15.5, padding: 14, borderRadius: 15, display: "flex", alignItems: "center", justifyContent: "center", gap: 9, marginBottom: 14 }} onClick={() => this.useGpsFromEditor()}><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#ec6a1f" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M12 21s-7-6.3-7-11a7 7 0 0 1 14 0c0 4.7-7 11-7 11Z" /><circle cx="12" cy="10" r="2.6" /></svg> Use my current location</button>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}><div style={{ flex: 1, height: 1, background: "#ece3d3" }} /><span style={{ fontFamily: "'DM Mono'", fontSize: 11, color: "#b5ab9a" }}>or type it</span><div style={{ flex: 1, height: 1, background: "#ece3d3" }} /></div>
+            <input className="text-input" value={s.locDraft} onChange={(e) => this.setState({ locDraft: e.target.value })} placeholder="City, neighbourhood or address" style={{ width: "100%", fontFamily: "'Hanken Grotesk'", fontSize: 16, fontWeight: 600, color: "#1a1a22", padding: "15px 16px", border: "1.5px solid #e6ddcd", borderRadius: 15, background: "#fdfaf3" }} />
 
-          {s.editor === "location" && (
-            <React.Fragment>
-              <h3 style={{ fontFamily: "'Fredoka'", fontWeight: 600, fontSize: 21, margin: "0 0 14px", color: "#1a1a22" }}>Where are you?</h3>
-              <button className="press" style={{ "--press-scale": 0.985, width: "100%", cursor: "pointer", border: "1.5px solid #ec6a1f", background: "#fbe7d8", color: "#c2591b", fontFamily: "'Fredoka'", fontWeight: 600, fontSize: 15.5, padding: 14, borderRadius: 15, display: "flex", alignItems: "center", justifyContent: "center", gap: 9, marginBottom: 14 }} onClick={() => this.useGpsFromEditor()}><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#ec6a1f" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M12 21s-7-6.3-7-11a7 7 0 0 1 14 0c0 4.7-7 11-7 11Z" /><circle cx="12" cy="10" r="2.6" /></svg> Use my current location</button>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}><div style={{ flex: 1, height: 1, background: "#ece3d3" }} /><span style={{ fontFamily: "'DM Mono'", fontSize: 11, color: "#b5ab9a" }}>or type it</span><div style={{ flex: 1, height: 1, background: "#ece3d3" }} /></div>
-              <input className="text-input" value={s.locDraft} onChange={(e) => this.setState({ locDraft: e.target.value })} placeholder="City, neighbourhood or address" style={{ width: "100%", fontFamily: "'Hanken Grotesk'", fontSize: 16, fontWeight: 600, color: "#1a1a22", padding: "15px 16px", border: "1.5px solid #e6ddcd", borderRadius: 15, background: "#fdfaf3" }} />
-            </React.Fragment>
-          )}
+            <h3 style={{ fontFamily: "'Fredoka'", fontWeight: 600, fontSize: 21, margin: "28px 0 14px", color: "#1a1a22" }}>When?</h3>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              {PERIODS.map(([p, hint]) => {
+                const active = s.period === p;
+                return (
+                  <button key={p} style={{
+                    cursor: "pointer", textAlign: "left",
+                    border: active ? "1.5px solid #ec6a1f" : "1.5px solid #ece3d3",
+                    background: active ? "#fbe7d8" : "#f6efe3",
+                    color: active ? "#c2591b" : "#403b33",
+                    fontFamily: "'Fredoka'", fontWeight: 600, fontSize: 16, padding: "14px 16px", borderRadius: 16,
+                  }} onClick={() => this.setState({ period: p })}>
+                    {p.charAt(0).toUpperCase() + p.slice(1)}
+                    <span style={{ display: "block", fontFamily: "'DM Mono'", fontSize: 11, fontWeight: 400, opacity: 0.7, marginTop: 3 }}>{hint}</span>
+                  </button>
+                );
+              })}
+            </div>
 
-          {s.editor === "time" && (
-            <React.Fragment>
-              <h3 style={{ fontFamily: "'Fredoka'", fontWeight: 600, fontSize: 21, margin: "0 0 14px", color: "#1a1a22" }}>When?</h3>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                {PERIODS.map(([p, hint]) => {
-                  const active = s.period === p;
-                  return (
-                    <button key={p} style={{
-                      cursor: "pointer", textAlign: "left",
-                      border: active ? "1.5px solid #ec6a1f" : "1.5px solid #ece3d3",
-                      background: active ? "#fbe7d8" : "#f6efe3",
-                      color: active ? "#c2591b" : "#403b33",
-                      fontFamily: "'Fredoka'", fontWeight: 600, fontSize: 16, padding: "14px 16px", borderRadius: 16,
-                    }} onClick={() => this.setState({ period: p })}>
-                      {p.charAt(0).toUpperCase() + p.slice(1)}
-                      <span style={{ display: "block", fontFamily: "'DM Mono'", fontSize: 11, fontWeight: 400, opacity: 0.7, marginTop: 3 }}>{hint}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </React.Fragment>
-          )}
+            <h3 style={{ fontFamily: "'Fredoka'", fontWeight: 600, fontSize: 21, margin: "28px 0 6px", color: "#1a1a22" }}>How far will you walk?</h3>
+            <div style={{ textAlign: "center", fontFamily: "'Fredoka'", fontWeight: 600, fontSize: 40, color: "#ec6a1f", margin: "10px 0 4px" }}>{s.walkDraft}<span style={{ fontSize: 18, color: "#9a9082", fontWeight: 500 }}> min</span></div>
+            <input type="range" min="5" max="45" step="5" value={s.walkDraft} onChange={(e) => this.setState({ walkDraft: parseInt(e.target.value, 10) })} style={{ width: "100%", accentColor: "#ec6a1f", height: 30 }} />
+            <div style={{ display: "flex", justifyContent: "space-between", fontFamily: "'DM Mono'", fontSize: 11, color: "#b5ab9a", marginTop: -2 }}><span>5 min</span><span>45 min</span></div>
 
-          {s.editor === "walk" && (
-            <React.Fragment>
-              <h3 style={{ fontFamily: "'Fredoka'", fontWeight: 600, fontSize: 21, margin: "0 0 6px", color: "#1a1a22" }}>How far will you walk?</h3>
-              <div style={{ textAlign: "center", fontFamily: "'Fredoka'", fontWeight: 600, fontSize: 40, color: "#ec6a1f", margin: "10px 0 4px" }}>{s.walkDraft}<span style={{ fontSize: 18, color: "#9a9082", fontWeight: 500 }}> min</span></div>
-              <input type="range" min="5" max="45" step="5" value={s.walkDraft} onChange={(e) => this.setState({ walkDraft: parseInt(e.target.value, 10) })} style={{ width: "100%", accentColor: "#ec6a1f", height: 30 }} />
-              <div style={{ display: "flex", justifyContent: "space-between", fontFamily: "'DM Mono'", fontSize: 11, color: "#b5ab9a", marginTop: -2 }}><span>5 min</span><span>45 min</span></div>
-            </React.Fragment>
-          )}
-
-          <button className="press" style={{ "--press-scale": 0.985, ...S.primaryBtn, marginTop: 22 }} onClick={() => this.applyEditor()}>Update recommendations</button>
+            <button className="press" style={{ "--press-scale": 0.985, ...S.primaryBtn, marginTop: 22 }} onClick={() => this.applyFilters()}>Update recommendations</button>
+          </div>
         </div>
       </React.Fragment>
     );
