@@ -1,14 +1,12 @@
-const { useEffect } = React;
-
 // Defaults that used to come from the hosting platform's props editor.
 // Tweak these directly.
 const CONFIG = {
   accentColor: "#ec6a1f",
   defaultWalkMins: 20,
-  // When true, recommendations are ranked by a call to window.claude.complete
-  // (an LLM bridge only present inside certain hosting environments). If
-  // that bridge isn't available, or the call fails, everything gracefully
-  // falls back to the deterministic tag-matching ranker below.
+  // When true, recommendations are ranked by a call to /api/recommend
+  // (a serverless function backed by Claude — see api/recommend.js). If
+  // that call fails, everything gracefully falls back to the deterministic
+  // tag-matching ranker below.
   aiPersonalization: true,
 };
 
@@ -300,7 +298,7 @@ class App extends React.Component {
 
     const s = this.state;
     const list = this.eligible().map(p => ({ id: p.id, name: p.name, type: p.type, category: p.category, tags: p.tags, walkMins: p.walkMins, openingHours: p.hoursLabel || null }));
-    const prompt = `You are a sharp local guide near ${s.location || "the traveller's location"}. Pick the 5 BEST things for this traveller RIGHT NOW and rank them best-first.
+    const prompt = `What's interesting to see or do at this location — ${s.location || "the traveller's location"} — right now?
 
 Time: ${this.weekday(s.clock)} ${s.period}, about ${this.fmtTime(s.clock)}
 Max walk: ${s.walkMins} minutes
@@ -310,16 +308,22 @@ They DISLIKE: ${s.dislikes.join(", ")}
 Candidate places (JSON, openingHours is raw OSM opening_hours syntax or null):
 ${JSON.stringify(list)}
 
+From these candidates, pick the 5 most interesting and rank them best-first.
 Rules:
 - If openingHours is given, prefer places likely OPEN at the current time; avoid ones likely closed.
 - Favour their likes; avoid anything clashing with dislikes.
-- "why": one warm, specific sentence (max 18 words) referencing the time of day and/or a like. Talk to them ("you").
+- "why": one warm, specific sentence (max 18 words) explaining why it's interesting, referencing the time of day and/or a like. Talk to them ("you").
 - "blurb": 1-2 inviting sentences (max ~35 words) describing the place.
 Return ONLY a JSON array of exactly 5 objects: [{"id":"...","why":"...","blurb":"..."}]. No markdown.`;
 
     try {
-      if (!window.claude || typeof window.claude.complete !== "function") throw new Error("no AI bridge available");
-      const raw = await window.claude.complete({ messages: [{ role: "user", content: prompt }], max_tokens: 1200 });
+      const res = await fetch("/api/recommend", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ prompt }),
+      });
+      if (!res.ok) throw new Error("recommend request failed: " + res.status);
+      const { raw } = await res.json();
       const m = raw.match(/\[[\s\S]*\]/);
       const picks = JSON.parse(m ? m[0] : raw);
       const byId = Object.fromEntries(this.PLACES.map(p => [p.id, p]));
@@ -551,7 +555,7 @@ Return ONLY a JSON array of exactly 5 objects: [{"id":"...","why":"...","blurb":
     return (
       <div style={{ position: "absolute", inset: 0, padding: "74px 30px 30px", display: "flex", flexDirection: "column" }}>
         <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center" }}>
-          <h1 style={{ fontFamily: "'Fredoka'", fontWeight: 600, fontSize: 40, lineHeight: 1.04, letterSpacing: "-0.01em", color: "#1a1a22", margin: "0 0 40px", textWrap: "balance" }}>What's fun to do,<br />right here,<br />right now?</h1>
+          <h1 style={{ fontFamily: "'Fredoka'", fontWeight: 600, fontSize: 40, lineHeight: 1.04, letterSpacing: "-0.01em", color: "#1a1a22", margin: "0 0 40px", textWrap: "balance" }}>What's interesting<br />to see,<br />right here?</h1>
           <button className="press" style={{ "--press-scale": 0.97, border: "none", cursor: "pointer", background: "#17171f", color: "#fffdf8", fontFamily: "'Fredoka'", fontWeight: 600, fontSize: 18, padding: "19px 34px", borderRadius: 20, boxShadow: "0 14px 30px -12px rgba(23,23,31,0.6)", display: "inline-flex", alignItems: "center", gap: 10 }} onClick={() => this.onUseLocation()}>
             <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#ec6a1f" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M12 21s-7-6.3-7-11a7 7 0 0 1 14 0c0 4.7-7 11-7 11Z" /><circle cx="12" cy="10" r="2.6" /></svg>
             Use my location
