@@ -203,6 +203,7 @@ class App extends React.Component {
         caption: cl.type.toLowerCase(),
         blurb: t.description || "",
         website: t.website || t["contact:website"] || "",
+        wiki: t.wikipedia || "",
       });
     }
     out.sort((a, b) => a.meters - b.meters);
@@ -331,9 +332,39 @@ class App extends React.Component {
     });
   }
 
+  // Wikipedia's summary API is free, needs no key, and is CORS-enabled for
+  // direct browser calls. Coverage is patchy by design — notable landmarks
+  // usually have a wikipedia= tag in OSM and get a real photo; an ordinary
+  // shop or pub won't, and just keeps the gradient placeholder. Only called
+  // for the final picks, not the whole candidate list, so it stays fast.
+  async attachPhotos(places) {
+    const targets = places.filter(p => p.wiki);
+    if (!targets.length) return;
+    const results = await Promise.allSettled(targets.map(async p => {
+      const i = p.wiki.indexOf(":");
+      const lang = i === -1 ? "en" : p.wiki.slice(0, i);
+      const title = i === -1 ? p.wiki : p.wiki.slice(i + 1);
+      if (!title) return null;
+      const r = await fetch(`https://${lang}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`);
+      if (!r.ok) return null;
+      const j = await r.json();
+      return j.thumbnail && j.thumbnail.source ? { id: p.id, photo: j.thumbnail.source } : null;
+    }));
+    const photos = Object.fromEntries(results.filter(r => r.status === "fulfilled" && r.value).map(r => [r.value.id, r.value.photo]));
+    if (!Object.keys(photos).length) return;
+    this.setState(s => ({ recs: s.recs ? s.recs.map(p => photos[p.id] ? { ...p, photo: photos[p.id] } : p) : s.recs }));
+  }
+
   async buildRecs() {
     this.setState({ screen: "recs", recsLoading: true, recsError: null, recs: null, recsIntro: "", selected: null, category: "All", route: [], routing: false, mapSel: null, loadingText: "Picking your 5 best…" });
-    if (!CONFIG.aiPersonalization) { setTimeout(() => this.setState({ recs: this.fallbackRecs(), recsLoading: false }), 400); return; }
+    if (!CONFIG.aiPersonalization) {
+      setTimeout(() => {
+        const recs = this.fallbackRecs();
+        this.setState({ recs, recsLoading: false });
+        this.attachPhotos(recs);
+      }, 400);
+      return;
+    }
 
     const s = this.state;
     const list = this.eligible().map(p => ({ id: p.id, name: p.name, type: p.type, category: p.category, tags: p.tags, walkMins: p.walkMins, openingHours: p.hoursLabel || null }));
@@ -384,9 +415,12 @@ Return ONLY this JSON shape, no markdown fences:
       const recs = picks.map(pk => byId[pk.id] ? { ...byId[pk.id], text: pk.text || byId[pk.id].blurb || "" } : null).filter(Boolean).slice(0, 5);
       if (recs.length < 3) throw new Error("too few");
       this.setState({ recs, recsIntro: parsed.intro || "", recsLoading: false });
+      this.attachPhotos(recs);
     } catch (e) {
       console.warn("AI recs failed, using fallback", e);
-      this.setState({ recs: this.fallbackRecs(), recsIntro: "", recsLoading: false });
+      const recs = this.fallbackRecs();
+      this.setState({ recs, recsIntro: "", recsLoading: false });
+      this.attachPhotos(recs);
     }
   }
 
@@ -896,9 +930,15 @@ Return ONLY this JSON shape, no markdown fences:
           <div style={{ flexShrink: 0, display: "flex", justifyContent: "center", padding: "12px 0 4px" }}><div style={{ width: 42, height: 5, borderRadius: 3, background: "#e2d8c6" }} /></div>
           <div style={{ overflowY: "auto", padding: "8px 24px calc(24px + env(safe-area-inset-bottom))" }}>
             <div style={{ position: "relative", width: "100%", height: 170, borderRadius: 20, overflow: "hidden", background: detail.imgBg, marginBottom: 18 }}>
-              <div style={{ position: "absolute", inset: 0, backgroundImage: "repeating-linear-gradient(135deg, rgba(0,0,0,0.04) 0 11px, transparent 11px 22px)" }} />
+              {detail.photo ? (
+                <img src={detail.photo} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+              ) : (
+                <div style={{ position: "absolute", inset: 0, backgroundImage: "repeating-linear-gradient(135deg, rgba(0,0,0,0.04) 0 11px, transparent 11px 22px)" }} />
+              )}
               <button className="press" style={{ "--press-scale": 0.95, position: "absolute", top: 12, right: 12, cursor: "pointer", border: "none", background: "#17171f", color: "#fffdf8", fontFamily: "'DM Mono'", fontWeight: 500, fontSize: 11, padding: "7px 12px", borderRadius: 14, display: "inline-flex", alignItems: "center", gap: 6 }} onClick={detail.directions}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#ec6a1f" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M3 11l19-9-9 19-2-8-8-2Z" /></svg> Show me the way</button>
-              <div style={{ position: "absolute", bottom: 12, left: 14, fontFamily: "'DM Mono'", fontSize: 11, color: "rgba(26,26,34,0.45)" }}>// {detail.caption}</div>
+              {!detail.photo && (
+                <div style={{ position: "absolute", bottom: 12, left: 14, fontFamily: "'DM Mono'", fontSize: 11, color: "rgba(26,26,34,0.45)" }}>// {detail.caption}</div>
+              )}
             </div>
             <div>
               <h2 style={{ fontFamily: "'Fredoka'", fontWeight: 600, fontSize: 27, letterSpacing: "-0.01em", margin: 0, color: "#1a1a22" }}>{detail.name}</h2>
