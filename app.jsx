@@ -332,23 +332,42 @@ class App extends React.Component {
     });
   }
 
-  // Wikipedia's summary API is free, needs no key, and is CORS-enabled for
-  // direct browser calls. Coverage is patchy by design — notable landmarks
-  // usually have a wikipedia= tag in OSM and get a real photo; an ordinary
-  // shop or pub won't, and just keeps the gradient placeholder. Only called
-  // for the final picks, not the whole candidate list, so it stays fast.
-  async attachPhotos(places) {
-    const targets = places.filter(p => p.wiki);
-    if (!targets.length) return;
-    const results = await Promise.allSettled(targets.map(async p => {
-      const i = p.wiki.indexOf(":");
-      const lang = i === -1 ? "en" : p.wiki.slice(0, i);
-      const title = i === -1 ? p.wiki : p.wiki.slice(i + 1);
+  // Photo lookup, tried cheapest-first: Wikipedia's summary API is free, no
+  // key, CORS-enabled for direct browser calls — but only covers places
+  // notable enough to have a wikipedia= tag in OSM. For everything else we
+  // fall back to Google Places Photos (via api/photo.js, which holds the
+  // key server-side and needs GOOGLE_PLACES_API_KEY set on Vercel) — much
+  // broader coverage, including ordinary local shops and pubs, at a small
+  // per-lookup cost. Only called for the final picks, not the whole
+  // candidate list, so it stays fast and keeps the cost down.
+  async fetchWikiPhoto(wiki) {
+    try {
+      const i = wiki.indexOf(":");
+      const lang = i === -1 ? "en" : wiki.slice(0, i);
+      const title = i === -1 ? wiki : wiki.slice(i + 1);
       if (!title) return null;
       const r = await fetch(`https://${lang}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`);
       if (!r.ok) return null;
       const j = await r.json();
-      return j.thumbnail && j.thumbnail.source ? { id: p.id, photo: j.thumbnail.source } : null;
+      return (j.thumbnail && j.thumbnail.source) || null;
+    } catch (e) { return null; }
+  }
+  async fetchGooglePhoto(name, lat, lon) {
+    try {
+      const r = await fetch("/api/photo", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name, lat, lon }),
+      });
+      if (!r.ok) return null;
+      const j = await r.json();
+      return j.photo || null;
+    } catch (e) { return null; }
+  }
+  async attachPhotos(places) {
+    const results = await Promise.allSettled(places.map(async p => {
+      const photo = (p.wiki && await this.fetchWikiPhoto(p.wiki)) || await this.fetchGooglePhoto(p.name, p.lat, p.lon);
+      return photo ? { id: p.id, photo } : null;
     }));
     const photos = Object.fromEntries(results.filter(r => r.status === "fulfilled" && r.value).map(r => [r.value.id, r.value.photo]));
     if (!Object.keys(photos).length) return;
