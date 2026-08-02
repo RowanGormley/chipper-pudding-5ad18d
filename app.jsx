@@ -282,12 +282,23 @@ class App extends React.Component {
   startRoute() {
     const places = this.state.route.map(id => this.PLACES.find(p => p.id === id)).filter(Boolean);
     if (!places.length) return;
-    const pt = p => `${p.lat},${p.lon}`;
-    const dest = pt(places[places.length - 1]);
-    const way = places.slice(0, -1).map(pt).join("|");
-    let url = `https://www.google.com/maps/dir/?api=1&travelmode=walking&destination=${dest}`;
-    if (way) url += `&waypoints=${encodeURIComponent(way)}`;
-    window.open(url, "_blank");
+    // Apple Maps' web link doesn't support multi-stop routes the way Google
+    // Maps' does, but it's the one link iOS reliably hands off to the native
+    // Maps app instead of loading as a page (see mapsUrl() below) — so we
+    // send the first unvisited stop; the app's own route panel still shows
+    // the full ordered list to work through.
+    window.open(this.mapsUrl(places[0].lat, places[0].lon), "_blank");
+  }
+
+  // Opens Apple Maps for walking directions. Using maps.apple.com (a
+  // universal link iOS intercepts before ever loading it as a webpage) — not
+  // Google Maps — matters specifically because this app is usually run from
+  // the iOS home screen as a standalone web app, which has no tabs and no
+  // back button. A plain web link (Google Maps included) would just
+  // navigate the whole app away in place with no way back; this hands off
+  // to the native Maps app instead and leaves the app untouched underneath.
+  mapsUrl(lat, lon) {
+    return `https://maps.apple.com/?daddr=${lat},${lon}&dirflg=w`;
   }
 
   // ---------- preferences ----------
@@ -315,10 +326,8 @@ class App extends React.Component {
       .sort((a, b) => (b.score - a.score) || (a.p.walkMins - b.p.walkMins))
       .slice(0, 5);
     return ranked.map(({ p }) => {
-      const liked = p.tags.find(t => this.state.likes.includes(t));
-      const opener = liked ? `Right up your street — you're into ${liked.toLowerCase()}.` : `A ${p.type.toLowerCase()} a short walk away.`;
-      const rest = p.blurb || `A ${p.type.toLowerCase()}${p.area ? " in " + p.area : ""}, roughly ${p.walkMins} minutes on foot from you.`;
-      return { ...p, text: `${opener} ${rest}` };
+      const text = p.blurb || `${p.type}${p.area ? " in " + p.area : ""}, about ${p.walkMins} min on foot.`;
+      return { ...p, text };
     });
   }
 
@@ -350,10 +359,13 @@ Rules:
 - If openingHours is given, prefer places likely OPEN at the current time; avoid ones likely closed.
 - Favour their likes; avoid anything clashing with dislikes.
 - "intro": one short sentence setting up the answer (don't list place names in it).
-- "text": for each place, 1-2 sentences of real, specific, informative prose about it —
-  what it is, why it's worth a look, any relevant detail (era, view, atmosphere). Don't repeat
-  the place's name inside "text", it's shown as a heading above it. Talk to them ("you") at
-  most once across all five, don't force it into every entry.
+- "text": ONE short, factual, information-dense sentence per place — the way a knowledgeable
+  local would describe it in a single breath, not a sales pitch. Lead with concretely what it
+  IS (era, type, distinguishing feature) rather than why they'd personally like it. No "right
+  up your street" style framing, don't talk to them ("you"), and don't repeat the same sentence
+  shape across entries. Don't repeat the place's name inside "text", it's shown as a heading
+  above it. Match this register exactly, e.g. for a castle: "12th-century motte-and-bailey
+  ruin with a striking keep, right in town."
 Return ONLY this JSON shape, no markdown fences:
 {"intro":"...","places":[{"id":"...","text":"..."}]} — exactly 5 entries in "places".`;
 
@@ -556,7 +568,7 @@ Return ONLY this JSON shape, no markdown fences:
       typeArea: p.area ? `${p.type} · ${p.area}` : p.type,
       hasHours: !!p.hoursLabel,
       onClick: () => this.setState({ selected: p }),
-      directions: (e) => { if (e && e.stopPropagation) e.stopPropagation(); const q = p.lat != null ? `${p.lat},${p.lon}` : encodeURIComponent(p.name); window.open(`https://www.google.com/maps/dir/?api=1&travelmode=walking&destination=${q}`, "_blank"); },
+      directions: (e) => { if (e && e.stopPropagation) e.stopPropagation(); const url = p.lat != null ? this.mapsUrl(p.lat, p.lon) : `https://maps.apple.com/?daddr=${encodeURIComponent(p.name)}&dirflg=w`; window.open(url, "_blank"); },
     };
   }
 
