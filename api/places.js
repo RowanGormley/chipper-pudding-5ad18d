@@ -31,7 +31,16 @@ export default async function handler(req, res) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 20000);
     try {
-      const r = await fetch(url, { method: "POST", body: "data=" + encodeURIComponent(query), signal: controller.signal });
+      const r = await fetch(url, {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          "accept": "application/json, */*",
+          "user-agent": "FunFinder/1.0 (personal walking-recommendations app; contact via GitHub RowanGormley)",
+        },
+        body: "data=" + encodeURIComponent(query),
+        signal: controller.signal,
+      });
       if (!r.ok) throw new Error(url + " -> HTTP " + r.status);
       return await r.json();
     } finally {
