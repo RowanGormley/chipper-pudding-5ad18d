@@ -367,7 +367,7 @@ class App extends React.Component {
     }
 
     const s = this.state;
-    const list = this.eligible().map(p => ({ id: p.id, name: p.name, type: p.type, category: p.category, tags: p.tags, walkMins: p.walkMins, openingHours: p.hoursLabel || null }));
+    const list = this.eligible().map(p => ({ name: p.name, type: p.type, category: p.category, tags: p.tags, walkMins: p.walkMins, openingHours: p.hoursLabel || null }));
     const prompt = `What's interesting to see or do at this location — ${s.location || "the traveller's location"} — right now?
 
 Time: ${this.weekday(s.clock)} ${s.period}, about ${this.fmtTime(s.clock)}
@@ -397,8 +397,8 @@ Rules:
   shape across entries. Don't repeat the place's name inside "text", it's shown as a heading
   above it. Match this register exactly, e.g. for a castle: "12th-century motte-and-bailey
   ruin with a striking keep, right in town."
-Return ONLY this JSON shape, no markdown fences:
-{"intro":"...","places":[{"id":"...","text":"..."}]} — exactly 5 entries in "places".`;
+Return ONLY this JSON shape, no markdown fences — "name" must be copied EXACTLY as given above:
+{"intro":"...","places":[{"name":"...","text":"..."}]} — exactly 5 entries in "places".`;
 
     try {
       const res = await fetch("/api/recommend", {
@@ -411,8 +411,16 @@ Return ONLY this JSON shape, no markdown fences:
       const m = raw.match(/\{[\s\S]*\}/);
       const parsed = JSON.parse(m ? m[0] : raw);
       const picks = Array.isArray(parsed.places) ? parsed.places : [];
-      const byId = Object.fromEntries(this.PLACES.map(p => [p.id, p]));
-      const recs = picks.map(pk => byId[pk.id] ? { ...byId[pk.id], text: pk.text || byId[pk.id].blurb || "" } : null).filter(Boolean).slice(0, 5);
+      // Match by name rather than the opaque OSM id: an LLM reliably echoes
+      // back a place name it just reasoned about in plain text, but is far
+      // more likely to mangle or drop a compound id like "way/123456789",
+      // which used to silently tip this into the fallback below.
+      const norm = x => String(x || "").toLowerCase().trim();
+      const byName = Object.fromEntries(this.PLACES.map(p => [norm(p.name), p]));
+      const recs = picks.map(pk => {
+        const match = byName[norm(pk.name)];
+        return match ? { ...match, text: pk.text || match.blurb || "" } : null;
+      }).filter(Boolean).slice(0, 5);
       if (recs.length < 3) throw new Error("too few");
       this.setState({ recs, recsIntro: parsed.intro || "", recsLoading: false });
       this.attachPhotos(recs);
