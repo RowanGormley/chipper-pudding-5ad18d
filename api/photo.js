@@ -2,7 +2,7 @@
 // Google Places API, server-side only, so GOOGLE_PLACES_API_KEY never
 // reaches the browser. Used as a fallback for places without a Wikipedia
 // page (see app.jsx's attachPhotos) since Google's coverage of ordinary
-// local businesses is much broader.
+// local businesses is much broader than Wikipedia's.
 //
 // Setup: in the Vercel project dashboard, go to Settings -> Environment
 // Variables and add GOOGLE_PLACES_API_KEY with a key from
