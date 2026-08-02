@@ -147,7 +147,7 @@ class App extends React.Component {
   async fetchOverpass(query) {
     const mirrors = [
       "https://overpass-api.de/api/interpreter",
-      "https://overpass.kumi.systems/api/interpreter",
+      "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
       "https://overpass.openstreetmap.fr/api/interpreter",
     ];
     const attempt = async (url) => {
