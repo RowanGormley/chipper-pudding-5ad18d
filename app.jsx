@@ -140,30 +140,32 @@ class App extends React.Component {
   }
 
   // The public Overpass API is a shared, free resource that occasionally
-  // times out or 504s under load. Try a couple of mirror servers in turn
-  // before giving up, so a single overloaded instance doesn't sink the
-  // whole search.
+  // times out or 504s under load. Race a few mirror servers at once and use
+  // whichever answers first — trying them one at a time meant a couple of
+  // slow/dead mirrors could add up to ~30s of waiting before ever reaching
+  // a working one.
   async fetchOverpass(query) {
     const mirrors = [
       "https://overpass-api.de/api/interpreter",
       "https://overpass.kumi.systems/api/interpreter",
       "https://overpass.openstreetmap.fr/api/interpreter",
     ];
-    let lastErr = null;
-    for (const url of mirrors) {
+    const attempt = async (url) => {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 20000);
       try {
         const res = await fetch(url, { method: "POST", body: "data=" + encodeURIComponent(query), signal: controller.signal });
         if (!res.ok) throw new Error("overpass " + res.status);
         return await res.json();
-      } catch (e) {
-        lastErr = e;
       } finally {
         clearTimeout(timer);
       }
+    };
+    try {
+      return await Promise.any(mirrors.map(attempt));
+    } catch (e) {
+      throw new Error("overpass unreachable");
     }
-    throw lastErr || new Error("overpass unreachable");
   }
 
   async fetchPlaces(lat, lon) {
