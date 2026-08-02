@@ -139,33 +139,24 @@ class App extends React.Component {
     return { category: "Culture", type: "Spot", tags: ["People watching"] };
   }
 
-  // The public Overpass API is a shared, free resource that occasionally
-  // times out or 504s under load. Race a few mirror servers at once and use
-  // whichever answers first — trying them one at a time meant a couple of
-  // slow/dead mirrors could add up to ~30s of waiting before ever reaching
-  // a working one.
+  // Relayed through api/places.js (which races several Overpass mirrors
+  // server-side) rather than calling Overpass directly from the browser.
+  // Direct-from-phone calls kept failing in ways that couldn't be
+  // reproduced or diagnosed from here; routing through our own backend
+  // means a future failure can be reproduced by hitting that endpoint
+  // directly instead of being invisible.
   async fetchOverpass(query) {
-    const mirrors = [
-      "https://overpass-api.de/api/interpreter",
-      "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
-      "https://overpass.openstreetmap.fr/api/interpreter",
-    ];
-    const attempt = async (url) => {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 20000);
-      try {
-        const res = await fetch(url, { method: "POST", body: "data=" + encodeURIComponent(query), signal: controller.signal });
-        if (!res.ok) throw new Error("overpass " + res.status);
-        return await res.json();
-      } finally {
-        clearTimeout(timer);
-      }
-    };
-    try {
-      return await Promise.any(mirrors.map(attempt));
-    } catch (e) {
-      throw new Error("overpass unreachable");
+    const res = await fetch("/api/places", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ query }),
+    });
+    if (!res.ok) {
+      let detail = "";
+      try { const j = await res.json(); if (j.detail) detail = " (" + j.detail.join("; ") + ")"; } catch (e) {}
+      throw new Error("places " + res.status + detail);
     }
+    return await res.json();
   }
 
   async fetchPlaces(lat, lon) {
