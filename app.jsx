@@ -113,7 +113,7 @@ class App extends React.Component {
   cap(x) { return x ? x.charAt(0).toUpperCase() + x.slice(1) : x; }
 
   classify(t) {
-    const a = t.amenity, to = t.tourism, l = t.leisure, h = t.historic, sh = t.shop;
+    const a = t.amenity, to = t.tourism, l = t.leisure, h = t.historic, sh = t.shop, w = t.waterway;
     if (a === "cafe" || a === "ice_cream") return { category: "Cafés", type: a === "ice_cream" ? "Ice cream" : "Café", tags: ["Coffee shops", "Quiet spots"] };
     if (a === "bar" || a === "pub" || a === "biergarten") return { category: "Bars", type: a === "pub" ? "Pub" : "Bar", tags: ["Hidden bars", "Nightlife", "Craft beer"] };
     if (a === "nightclub") return { category: "Music", type: "Nightclub", tags: ["Nightlife", "Live music", "Late nights"] };
@@ -122,16 +122,19 @@ class App extends React.Component {
     if (a === "marketplace") return { category: "Food", type: "Market", tags: ["Local markets", "Street food", "People watching"] };
     if (a === "theatre" || a === "arts_centre") return { category: "Culture", type: "Theatre", tags: ["Live music", "History"] };
     if (a === "cinema") return { category: "Culture", type: "Cinema", tags: ["Nightlife"] };
+    if (a === "place_of_worship") return { category: "Culture", type: this.cap(t.building && t.building !== "yes" ? t.building : "Place of worship"), tags: ["History", "Architecture", "Quiet spots"] };
     if (to === "museum") return { category: "Culture", type: "Museum", tags: ["Museums", "History", "Art galleries"] };
     if (to === "gallery" || to === "artwork") return { category: "Culture", type: to === "artwork" ? "Public art" : "Gallery", tags: ["Art galleries", "Street art"] };
     if (to === "viewpoint") return { category: "Outdoors", type: "Viewpoint", tags: ["Rooftop views", "Quiet spots"] };
     if (to === "attraction" || to === "theme_park" || to === "zoo" || to === "aquarium") return { category: "Culture", type: this.cap(to.replace(/_/g, " ")), tags: ["People watching", "History"] };
     if (l === "park" || l === "garden" || l === "nature_reserve") return { category: "Outdoors", type: l === "garden" ? "Garden" : "Park", tags: ["Parks & gardens", "Quiet spots", "People watching"] };
     if (l === "marina") return { category: "Outdoors", type: "Marina", tags: ["Quiet spots", "People watching"] };
+    if (w === "river" || w === "canal") return { category: "Outdoors", type: w === "canal" ? "Canal walk" : "River walk", tags: ["Parks & gardens", "Quiet spots", "People watching"] };
     if (h) return { category: "Culture", type: this.cap(String(h).replace(/_/g, " ")), tags: ["History", "Architecture", "Quiet spots"] };
     if (sh === "books") return { category: "Shops", type: "Bookshop", tags: ["Bookshops", "Quiet spots"] };
     if (sh === "art") return { category: "Shops", type: "Art shop", tags: ["Art galleries", "Vintage shops"] };
     if (sh === "music") return { category: "Shops", type: "Record shop", tags: ["Vintage shops", "Nightlife"] };
+    if (sh === "bakery" || sh === "chocolate" || sh === "deli") return { category: "Shops", type: this.cap(sh), tags: ["Local markets", "Street food"] };
     if (sh) return { category: "Shops", type: "Shop", tags: ["Vintage shops", "Local markets"] };
     return { category: "Culture", type: "Spot", tags: ["People watching"] };
   }
@@ -166,11 +169,12 @@ class App extends React.Component {
   async fetchPlaces(lat, lon) {
     const R = Math.min(3500, Math.max(400, Math.round(this.state.walkMins * 85)));
     const q = `[out:json][timeout:25];(` +
-      `nwr["amenity"~"^(cafe|bar|pub|biergarten|restaurant|fast_food|ice_cream|marketplace|theatre|cinema|arts_centre|nightclub)$"]["name"](around:${R},${lat},${lon});` +
+      `nwr["amenity"~"^(cafe|bar|pub|biergarten|restaurant|fast_food|ice_cream|marketplace|theatre|cinema|arts_centre|nightclub|place_of_worship)$"]["name"](around:${R},${lat},${lon});` +
       `nwr["tourism"~"^(museum|gallery|artwork|attraction|viewpoint|zoo|aquarium|theme_park)$"]["name"](around:${R},${lat},${lon});` +
       `nwr["leisure"~"^(park|garden|nature_reserve|marina)$"]["name"](around:${R},${lat},${lon});` +
       `nwr["historic"]["name"](around:${R},${lat},${lon});` +
-      `nwr["shop"~"^(books|art|music|gift|craft|antiques|second_hand)$"]["name"](around:${R},${lat},${lon});` +
+      `nwr["shop"~"^(books|art|music|gift|craft|antiques|second_hand|clothes|deli|chocolate|florist|department_store|variety_store|jewelry|bakery)$"]["name"](around:${R},${lat},${lon});` +
+      `nwr["waterway"~"^(river|canal)$"]["name"](around:${R},${lat},${lon});` +
       `);out center 400;`;
     const json = await this.fetchOverpass(q);
     const seen = new Set();
@@ -338,6 +342,11 @@ From these candidates, pick the 5 most interesting and rank them best-first. Wri
 knowledgeable local guide giving a real, informative answer — the way you'd naturally reply
 to this question in conversation, not like ad copy.
 Rules:
+- Aim for a good MIX, not five of the same category — ideally something historic/cultural,
+  something shopping-related, something food-or-drink-related, and something a bit quirky
+  or unusual, plus one more free pick. Only include a category if there's a genuinely decent
+  candidate for it — don't force a weak pick just for variety, and don't pad with filler if
+  fewer than 5 candidates are actually worth recommending.
 - If openingHours is given, prefer places likely OPEN at the current time; avoid ones likely closed.
 - Favour their likes; avoid anything clashing with dislikes.
 - "intro": one short sentence setting up the answer (don't list place names in it).
