@@ -136,6 +136,33 @@ class App extends React.Component {
     return { category: "Culture", type: "Spot", tags: ["People watching"] };
   }
 
+  // The public Overpass API is a shared, free resource that occasionally
+  // times out or 504s under load. Try a couple of mirror servers in turn
+  // before giving up, so a single overloaded instance doesn't sink the
+  // whole search.
+  async fetchOverpass(query) {
+    const mirrors = [
+      "https://overpass-api.de/api/interpreter",
+      "https://overpass.kumi.systems/api/interpreter",
+      "https://overpass.openstreetmap.fr/api/interpreter",
+    ];
+    let lastErr = null;
+    for (const url of mirrors) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 20000);
+      try {
+        const res = await fetch(url, { method: "POST", body: "data=" + encodeURIComponent(query), signal: controller.signal });
+        if (!res.ok) throw new Error("overpass " + res.status);
+        return await res.json();
+      } catch (e) {
+        lastErr = e;
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+    throw lastErr || new Error("overpass unreachable");
+  }
+
   async fetchPlaces(lat, lon) {
     const R = Math.min(3500, Math.max(400, Math.round(this.state.walkMins * 85)));
     const q = `[out:json][timeout:25];(` +
@@ -145,9 +172,7 @@ class App extends React.Component {
       `nwr["historic"]["name"](around:${R},${lat},${lon});` +
       `nwr["shop"~"^(books|art|music|gift|craft|antiques|second_hand)$"]["name"](around:${R},${lat},${lon});` +
       `);out center 400;`;
-    const res = await fetch("https://overpass-api.de/api/interpreter", { method: "POST", body: "data=" + encodeURIComponent(q) });
-    if (!res.ok) throw new Error("overpass " + res.status);
-    const json = await res.json();
+    const json = await this.fetchOverpass(q);
     const seen = new Set();
     const out = [];
     for (const el of (json.elements || [])) {
