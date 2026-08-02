@@ -376,6 +376,37 @@ class App extends React.Component {
     this.setState(s => ({ recs: s.recs ? s.recs.map(p => photos[p.id] ? { ...p, photo: photos[p.id] } : p) : s.recs }));
   }
 
+  // "Tell me more" on the detail sheet: fetches a genuinely detailed,
+  // multi-paragraph write-up for one specific place (history, what
+  // survives, practical visiting notes), replacing the short list-view
+  // line. Reuses /api/recommend since it just forwards any prompt to
+  // Claude — this one asks for plain prose, not the JSON shape buildRecs()
+  // uses. Result is cached onto both the open detail sheet and the
+  // matching card in recs, so re-opening it later doesn't re-fetch.
+  async expandPlace(place) {
+    if (place.expanded || place.expanding) return;
+    const loc = this.state.location || "this area";
+    const patch = (upd) => this.setState(st => ({
+      selected: st.selected && st.selected.id === place.id ? { ...st.selected, ...upd } : st.selected,
+      recs: st.recs ? st.recs.map(p => p.id === place.id ? { ...p, ...upd } : p) : st.recs,
+    }));
+    patch({ expanding: true, expandError: false });
+    const prompt = `Write a genuinely informative description of "${place.name}" (a ${place.type}) near ${loc}. 2-4 short paragraphs of real, specific prose: history or origin, what actually survives or is there today, and anything practically useful to know (access, opening days, ownership) if relevant. Plain prose only — no headings, no bullet points, no markdown, no meta-commentary about the search itself, and don't just repeat the place's name as an opener. If you don't have reliable specific knowledge of this exact place, say so plainly in one short line rather than inventing detail.`;
+    try {
+      const res = await fetch("/api/recommend", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ prompt }),
+      });
+      if (!res.ok) throw new Error("expand failed: " + res.status);
+      const { raw } = await res.json();
+      patch({ text: (raw || "").trim(), expanding: false, expanded: true });
+    } catch (e) {
+      console.warn("expandPlace failed", e);
+      patch({ expanding: false, expandError: true });
+    }
+  }
+
   async buildRecs() {
     this.setState({ screen: "recs", recsLoading: true, recsError: null, recs: null, recsIntro: "", selected: null, category: "All", route: [], routing: false, mapSel: null, loadingText: "Picking your 5 best…" });
     if (!CONFIG.aiPersonalization) {
@@ -980,10 +1011,24 @@ Return ONLY this JSON shape, no markdown fences — "name" must be copied EXACTL
                 <div style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#f4ede1", borderRadius: 12, padding: "9px 12px", fontSize: 13, fontWeight: 600, color: "#403b33" }}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#ec6a1f" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>{detail.hoursLabel}</div>
               )}
             </div>
-            <p style={{ fontSize: 15.5, lineHeight: 1.55, color: "#4b463d", margin: "0 0 20px" }}>{detail.text}</p>
-            <div style={{ display: "flex", gap: 10 }}>
-              <button className="press" style={{ "--press-scale": 0.98, flex: 1, cursor: "pointer", border: "none", background: "#17171f", color: "#fffdf8", fontFamily: "'Fredoka'", fontWeight: 600, fontSize: 16, padding: 15, borderRadius: 16, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8 }} onClick={detail.directions}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ec6a1f" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 21s-7-6.3-7-11a7 7 0 0 1 14 0c0 4.7-7 11-7 11Z" /><circle cx="12" cy="10" r="2.6" /></svg>Directions</button>
-              <button className="press" style={{ "--press-scale": 0.98, flexShrink: 0, cursor: "pointer", border: "1px solid #e6ddcd", background: "#fffdf8", color: "#1a1a22", fontFamily: "'Fredoka'", fontWeight: 600, fontSize: 16, padding: "15px 22px", borderRadius: 16 }} onClick={() => this.setState({ selected: null })}>Close</button>
+            {detail.expanding ? (
+              <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "0 0 20px", color: "#9a9082", fontFamily: "'DM Mono'", fontSize: 13 }}>
+                <div style={{ width: 16, height: 16, border: "2.5px solid #f0e6d6", borderTopColor: "#ec6a1f", borderRadius: "50%", animation: "ff-spin 0.8s linear infinite" }} />
+                Getting more detail…
+              </div>
+            ) : (
+              <p style={{ fontSize: 15.5, lineHeight: 1.55, color: "#4b463d", margin: "0 0 8px", whiteSpace: "pre-line" }}>{detail.text}</p>
+            )}
+            {detail.expandError && !detail.expanding && (
+              <div style={{ fontFamily: "'DM Mono'", fontSize: 12, color: "#c2591b", margin: "0 0 12px" }}>Couldn't load more just then — try again.</div>
+            )}
+            <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
+              {!detail.expanded && (
+                <button className="press" style={{ "--press-scale": 0.98, flex: 1, cursor: "pointer", border: "none", background: "#17171f", color: "#fffdf8", fontFamily: "'Fredoka'", fontWeight: 600, fontSize: 16, padding: 15, borderRadius: 16, opacity: detail.expanding ? 0.6 : 1 }} onClick={() => this.expandPlace(detail)}>
+                  {detail.expanding ? "Loading…" : "Tell me more"}
+                </button>
+              )}
+              <button className="press" style={{ "--press-scale": 0.98, flex: detail.expanded ? 1 : undefined, flexShrink: detail.expanded ? undefined : 0, cursor: "pointer", border: "1px solid #e6ddcd", background: "#fffdf8", color: "#1a1a22", fontFamily: "'Fredoka'", fontWeight: 600, fontSize: 16, padding: detail.expanded ? 15 : "15px 22px", borderRadius: 16 }} onClick={() => this.setState({ selected: null })}>Close</button>
             </div>
           </div>
         </div>
