@@ -956,18 +956,27 @@ Return ONLY this JSON shape, no markdown fences — "name" must be copied EXACTL
               <p style={{ fontFamily: "'Hanken Grotesk'", fontSize: 15.5, lineHeight: 1.6, color: "#4b463d", margin: "0 0 22px" }}>{s.recsIntro}</p>
             )}
             {cards.map(c => (
-              <div key={c.id} style={{ marginBottom: 22 }}>
-                <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
-                  <h3 className="press" style={{ "--press-scale": 0.98, cursor: "pointer", fontFamily: "'Fredoka'", fontWeight: 600, fontSize: 19, margin: 0, color: "#1a1a22", letterSpacing: "-0.01em" }} onClick={c.onClick}>{c.name}</h3>
-                  <button className="press" style={{ "--press-scale": 0.9, flexShrink: 0, cursor: "pointer", border: "none", background: "#f4ede1", color: "#9a9082", width: 26, height: 26, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", marginTop: 2 }} onClick={() => this.replaceRec(c.id)} aria-label="Not interested, show something else">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
+              <div key={c.id} style={{ marginBottom: 22, display: "flex", gap: 14 }}>
+                <div className="press" style={{ "--press-scale": 0.97, cursor: "pointer", flexShrink: 0, width: 64, height: 64, borderRadius: 14, overflow: "hidden", background: c.imgBg, position: "relative" }} onClick={c.onClick}>
+                  {c.photo ? (
+                    <img src={c.photo} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+                  ) : (
+                    <div style={{ position: "absolute", inset: 0, backgroundImage: "repeating-linear-gradient(135deg, rgba(0,0,0,0.05) 0 8px, transparent 8px 16px)" }} />
+                  )}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
+                    <h3 className="press" style={{ "--press-scale": 0.98, cursor: "pointer", fontFamily: "'Fredoka'", fontWeight: 600, fontSize: 19, margin: 0, color: "#1a1a22", letterSpacing: "-0.01em" }} onClick={c.onClick}>{c.name}</h3>
+                    <button className="press" style={{ "--press-scale": 0.9, flexShrink: 0, cursor: "pointer", border: "none", background: "#f4ede1", color: "#9a9082", width: 26, height: 26, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", marginTop: 2 }} onClick={() => this.replaceRec(c.id)} aria-label="Not interested, show something else">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
+                    </button>
+                  </div>
+                  <div style={{ fontFamily: "'DM Mono'", fontSize: 11.5, color: "#b5ab9a", margin: "3px 0 8px" }}>{c.metaLine}</div>
+                  <p style={{ fontFamily: "'Hanken Grotesk'", fontSize: 15.5, lineHeight: 1.6, color: "#4b463d", margin: "0 0 8px" }}>{c.text}</p>
+                  <button className="press" style={{ "--press-scale": 0.96, cursor: "pointer", border: "none", background: "none", padding: 0, display: "inline-flex", alignItems: "center", gap: 4, fontFamily: "'DM Mono'", fontWeight: 500, fontSize: 12, color: "#ec6a1f", letterSpacing: "0.03em" }} onClick={c.onClick}>
+                    More <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#ec6a1f" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M9 5l7 7-7 7" /></svg>
                   </button>
                 </div>
-                <div style={{ fontFamily: "'DM Mono'", fontSize: 11.5, color: "#b5ab9a", margin: "3px 0 8px" }}>{c.metaLine}</div>
-                <p style={{ fontFamily: "'Hanken Grotesk'", fontSize: 15.5, lineHeight: 1.6, color: "#4b463d", margin: "0 0 8px" }}>{c.text}</p>
-                <button className="press" style={{ "--press-scale": 0.96, cursor: "pointer", border: "none", background: "none", padding: 0, display: "inline-flex", alignItems: "center", gap: 4, fontFamily: "'DM Mono'", fontWeight: 500, fontSize: 12, color: "#ec6a1f", letterSpacing: "0.03em" }} onClick={c.onClick}>
-                  More <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#ec6a1f" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M9 5l7 7-7 7" /></svg>
-                </button>
               </div>
             ))}
             {s.replacing && (
