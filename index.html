@@ -13,7 +13,25 @@
 <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-<script type="text/babel" data-presets="react" src="app.jsx"></script>
+<script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
+<script>
+// Transformed manually (rather than via <script type="text/babel" src="app.jsx">)
+// so the JSX runtime option below can be set explicitly. Babel's "react" preset
+// silently changed its default runtime between major versions (classic ->
+// automatic, which emits `import "react/jsx-runtime"` — invalid in a plain
+// script, no bundler). Pin the version above AND set the option explicitly so
+// this can't silently break again.
+fetch("app.jsx")
+  .then((r) => r.text())
+  .then((code) => {
+    const out = Babel.transform(code, {
+      filename: "app.jsx",
+      presets: [["react", { runtime: "classic" }]],
+    }).code;
+    const script = document.createElement("script");
+    script.textContent = out;
+    document.body.appendChild(script);
+  });
+</script>
 </body>
 </html>
