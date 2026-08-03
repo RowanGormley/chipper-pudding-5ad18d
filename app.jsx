@@ -490,10 +490,13 @@ dislikes.
 
 Rank by genuine overall interest and fame FIRST. If there's one unmissable, iconic thing this
 specific place is best known for, it should normally be #1 — never distort or bury the obvious
-top pick just to fit a category quota. Beyond that, prefer a reasonable mix across the remaining
-picks (something historic/cultural, something shopping-related, something food-or-drink-related,
-something a bit quirky or unusual) over five near-identical options, but only where there's a
-genuinely good option — don't force a weak pick just for variety.
+top pick just to fit a category quota. If the location given IS ITSELF that landmark (e.g. the
+traveller is standing at/near it already), still include it as a pick if it's genuinely the
+area's top draw — don't skip recommending it just because it's where they currently are. Beyond
+that, prefer a reasonable mix across the remaining picks (something historic/cultural, something
+shopping-related, something food-or-drink-related, something a bit quirky or unusual) over near-
+identical options, but only where there's a genuinely good option — don't force a weak pick just
+for variety.
 
 For each, give:
 - "name": its exact, correctly-spelled real name (needed to look it up on a map afterwards)
@@ -504,8 +507,9 @@ For each, give:
   up your street" style framing, don't talk to them ("you"), and don't repeat the same sentence
   shape across entries. Match this register exactly, e.g. for a castle: "12th-century
   motte-and-bailey ruin with a striking keep, right in town."
-Return ONLY this JSON shape, no markdown fences:
-{"intro":"one short sentence setting up the answer, no place names in it","places":[{"name":"...","category":"...","type":"...","text":"..."}]} — exactly 5 entries in "places".`;
+Return ONLY this JSON shape, no markdown fences, ranked best-first:
+{"intro":"one short sentence setting up the answer, no place names in it","places":[{"name":"...","category":"...","type":"...","text":"..."}]} — exactly 7 entries in "places" (the top 5 will
+be used, plus 2 spares in case any fail to look up on a map afterwards).`;
 
     try {
       const res = await fetch("/api/recommend", {
@@ -518,9 +522,18 @@ Return ONLY this JSON shape, no markdown fences:
       const m = raw.match(/\{[\s\S]*\}/);
       const parsed = JSON.parse(m ? m[0] : raw);
       const picks = Array.isArray(parsed.places) ? parsed.places : [];
-      const recs = await this.geocodePicks(picks);
+      // Ask for 7 ranked candidates but only geocode as many as needed to
+      // reach 5, in rank order, so a couple of failed lookups don't
+      // silently shrink the list — falls back only if fewer than 3 of the
+      // ranked candidates work out at all.
+      const recs = [];
+      for (const pick of picks) {
+        if (recs.length >= 5) break;
+        const [geocoded] = await this.geocodePicks([pick]);
+        if (geocoded) recs.push(geocoded);
+      }
       if (recs.length < 3) throw new Error("too few after geocoding");
-      this.setState({ recs: recs.slice(0, 5), recsIntro: parsed.intro || "", recsLoading: false });
+      this.setState({ recs, recsIntro: parsed.intro || "", recsLoading: false });
       this.attachPhotos(recs);
     } catch (e) {
       console.warn("AI recs failed, using fallback", e);
