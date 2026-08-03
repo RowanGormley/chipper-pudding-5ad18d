@@ -2,6 +2,12 @@
 // the most interesting candidate places. Runs server-side only, so the
 // ANTHROPIC_API_KEY environment variable is never exposed to the browser.
 // See api/identify.js for the sibling endpoint that handles the camera scan.
+//
+// A real request with a full candidate list measured at ~8s — close enough
+// to Vercel's 10s default function timeout that it was intermittently
+// getting killed mid-flight, silently tipping the app into its fallback
+// text. maxDuration raises that ceiling explicitly.
+export const config = { maxDuration: 30 };
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {

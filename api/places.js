@@ -8,6 +8,11 @@
 // (carrier network quirks, standalone-web-app networking behavior, etc.)
 // and, just as importantly, means any future failure can be reproduced and
 // inspected by hitting this endpoint directly, instead of being invisible.
+//
+// Individual mirror attempts get up to 20s each; raise the function's own
+// ceiling well past Vercel's 10s default so a legitimately-slow-but-working
+// mirror isn't killed mid-response.
+export const config = { maxDuration: 30 };
 
 const MIRRORS = [
   "https://overpass-api.de/api/interpreter",

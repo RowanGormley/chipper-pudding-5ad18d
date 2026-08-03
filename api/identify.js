@@ -5,6 +5,10 @@
 //
 // Setup: in the Vercel project dashboard, go to Settings -> Environment
 // Variables and add ANTHROPIC_API_KEY with a key from console.anthropic.com.
+//
+// Vision calls can run close to Vercel's 10s default function timeout;
+// raise the ceiling explicitly rather than risk it getting killed mid-flight.
+export const config = { maxDuration: 30 };
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {

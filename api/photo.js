@@ -13,6 +13,7 @@
 // redirect server-side and hand the browser just that final URL, so the
 // key is never exposed and the image itself loads directly from Google's
 // CDN rather than being proxied through this function.
+export const config = { maxDuration: 20 };
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
