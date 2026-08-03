@@ -471,43 +471,27 @@ class App extends React.Component {
     // Deliberately NOT restricted to the map-data candidate list (this.PLACES)
     // the way this used to work — that approach could only ever surface what
     // happened to be tagged in a matching way in OpenStreetMap, which kept
-    // missing genuinely famous local landmarks (e.g. a pier tagged in a way
-    // the search never checked) and had no way to know real current opening
-    // status. Claude is asked directly, with web search enabled server-side,
-    // for real knowledge of the area; its picks are geocoded afterwards
-    // (see geocodePicks) purely to get map coordinates for the UI.
-    const prompt = `What's genuinely interesting to see or do within about ${s.walkMins} minutes' walk of ${s.location || "this location"} right now?
-
-Time: ${this.weekday(s.clock)} ${s.period}, about ${this.fmtTime(s.clock)}
-They LIKE: ${s.likes.join(", ")}
-They DISLIKE: ${s.dislikes.join(", ")}
-
-Use real, current knowledge of this specific area, including web search if it helps — genuinely
-well-known local landmarks and attractions, not just what a generic map database happens to have
-tagged. Take real opening hours/current status into account for right now where you can find it;
-avoid recommending somewhere likely closed. Favour their likes; avoid anything clashing with
-dislikes.
-
-Rank by genuine overall interest and fame FIRST. If there's one unmissable, iconic thing this
-specific place is best known for, it should normally be #1 — never distort or bury the obvious
-top pick just to fit a category quota. If the location given IS ITSELF that landmark (e.g. the
-traveller is standing at/near it already), still include it as a pick if it's genuinely the
-area's top draw — don't skip recommending it just because it's where they currently are. Beyond
-that, prefer a reasonable mix across the remaining picks (something historic/cultural, something
-shopping-related, something food-or-drink-related, something a bit quirky or unusual) over near-
-identical options, but only where there's a genuinely good option — don't force a weak pick just
-for variety.
+    // missing genuinely famous local landmarks. Claude is asked directly,
+    // with web search enabled server-side, for real knowledge of the area;
+    // its picks are geocoded afterwards (see geocodePicks) purely to get map
+    // coordinates for the UI.
+    //
+    // Kept deliberately minimal for now — no time-of-day/opening-hours
+    // awareness, no likes/dislikes personalization, no "mix of categories"
+    // steering. Each of those added real prompt complexity and each caused
+    // its own bug (personalization silently vetoing famous landmarks, the
+    // category-mix quota distorting or burying the obvious #1 pick) without
+    // a clear win in return. Simplest version first; re-add whichever of
+    // those earns its keep once this baseline is confirmed fast and reliable.
+    const prompt = `List the 7 most interesting real things to see or do within about ${s.walkMins} minutes' walk of ${s.location || "this location"}, ranked best-first. Use real, current knowledge, including web search if it helps.
 
 For each, give:
-- "name": its exact, correctly-spelled real name (needed to look it up on a map afterwards)
+- "name": exact, correctly-spelled real name (needed to look it up on a map afterwards)
 - "category": exactly one of ${CATS.filter(c => c !== "All").join(", ")}
 - "type": a short 1-3 word label, e.g. "Pier", "Museum", "Pub"
-- "text": ONE short, factual, information-dense sentence — the way a knowledgeable local would
-  describe it in a single breath, not a sales pitch. Lead with concretely what it IS. No "right
-  up your street" style framing, don't talk to them ("you"), and don't repeat the same sentence
-  shape across entries. Match this register exactly, e.g. for a castle: "12th-century
-  motte-and-bailey ruin with a striking keep, right in town."
-Return ONLY this JSON shape, no markdown fences, ranked best-first:
+- "text": ONE short, factual sentence describing it, e.g. "12th-century motte-and-bailey ruin with a striking keep, right in town."
+
+Return ONLY this JSON shape, no markdown fences:
 {"intro":"one short sentence setting up the answer, no place names in it","places":[{"name":"...","category":"...","type":"...","text":"..."}]} — exactly 7 entries in "places" (the top 5 will
 be used, plus 2 spares in case any fail to look up on a map afterwards).`;
 
