@@ -457,9 +457,22 @@ class App extends React.Component {
   }
 
   async buildRecs() {
+    // If buildRecs() gets triggered more than once for what the user thinks
+    // is one action (e.g. a double tap before the UI shows it's loading),
+    // both calls used to run to completion independently and whichever
+    // response happened to arrive later — not whichever was more "correct"
+    // — silently overwrote the other, producing exactly the "shows a good
+    // list, then replaces it with a worse one a few seconds later" bug
+    // found in testing. This token makes only the most recently started
+    // call allowed to ever update state; anything from an older call is
+    // dropped once a newer one has begun.
+    const requestId = (this._recsRequestId = (this._recsRequestId || 0) + 1);
+    const isStale = () => requestId !== this._recsRequestId;
+
     this.setState({ screen: "recs", recsLoading: true, recsError: null, recs: null, recsIntro: "", selected: null, category: "All", route: [], routing: false, mapSel: null, loadingText: "Picking your 5 best…" });
     if (!CONFIG.aiPersonalization) {
       setTimeout(() => {
+        if (isStale()) return;
         const recs = this.fallbackRecs();
         this.setState({ recs, recsLoading: false });
         this.attachPhotos(recs);
@@ -517,10 +530,12 @@ be used, plus 2 spares in case any fail to look up on a map afterwards).`;
         if (geocoded) recs.push(geocoded);
       }
       if (recs.length < 3) throw new Error("too few after geocoding");
+      if (isStale()) return;
       this.setState({ recs, recsIntro: parsed.intro || "", recsLoading: false });
       this.attachPhotos(recs);
     } catch (e) {
       console.warn("AI recs failed, using fallback", e);
+      if (isStale()) return;
       const recs = this.fallbackRecs();
       this.setState({ recs, recsIntro: "", recsLoading: false });
       this.attachPhotos(recs);
@@ -533,12 +548,19 @@ be used, plus 2 spares in case any fail to look up on a map afterwards).`;
   // candidates; falls back to the deterministic tag-matching pick from the
   // map-data pool (this.eligible()) if that fails.
   async replaceRec(placeId) {
+    // Shares buildRecs()'s request token: bumping it here means a slower
+    // buildRecs() call still in flight can't clobber this dismiss-and-
+    // replace afterwards, and vice versa if two dismisses overlap.
+    const requestId = (this._recsRequestId = (this._recsRequestId || 0) + 1);
+    const isStale = () => requestId !== this._recsRequestId;
+
     const s = this.state;
     const outgoing = (s.recs || []).find(p => p.id === placeId);
     const kept = (s.recs || []).filter(p => p.id !== placeId);
     this.setState({ recs: kept, replacing: true });
 
     const finish = (pick) => {
+      if (isStale()) return;
       this.setState(st => ({ recs: [...(st.recs || []), pick], replacing: false }));
       this.attachPhotos([pick]);
     };
