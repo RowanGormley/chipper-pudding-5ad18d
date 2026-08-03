@@ -42,7 +42,11 @@ export default async function handler(req, res) {
       },
       body: JSON.stringify({
         model: "claude-sonnet-5",
-        max_tokens: 1500,
+        // Search queries and tool results also count against max_tokens
+        // when web_search is enabled, on top of the actual JSON answer —
+        // 1500 wasn't enough headroom and was silently truncating the
+        // final response mid-JSON.
+        max_tokens: 4096,
         messages: [{ role: "user", content: prompt }],
         tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 5 }],
       }),
