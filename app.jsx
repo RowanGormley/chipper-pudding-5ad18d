@@ -488,10 +488,12 @@ tagged. Take real opening hours/current status into account for right now where 
 avoid recommending somewhere likely closed. Favour their likes; avoid anything clashing with
 dislikes.
 
-Pick the 5 best, aiming for a good MIX — ideally something historic/cultural, something
-shopping-related, something food-or-drink-related, something a bit quirky or unusual, plus one
-more free pick — but only include a category if there's a genuinely good option, don't force a
-weak pick just for variety.
+Rank by genuine overall interest and fame FIRST. If there's one unmissable, iconic thing this
+specific place is best known for, it should normally be #1 — never distort or bury the obvious
+top pick just to fit a category quota. Beyond that, prefer a reasonable mix across the remaining
+picks (something historic/cultural, something shopping-related, something food-or-drink-related,
+something a bit quirky or unusual) over five near-identical options, but only where there's a
+genuinely good option — don't force a weak pick just for variety.
 
 For each, give:
 - "name": its exact, correctly-spelled real name (needed to look it up on a map afterwards)
