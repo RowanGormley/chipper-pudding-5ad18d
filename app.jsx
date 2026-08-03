@@ -140,6 +140,23 @@ class App extends React.Component {
     return { category: "Culture", type: "Spot", tags: ["People watching"] };
   }
 
+  // Every backend call below had a server-side timeout (see each api/*.js
+  // file's maxDuration) but no client-side one at all — if the connection
+  // stalled or the server hung without cleanly erroring back, the browser
+  // had nothing to make it give up, so a "Picking your 5 best…" spinner
+  // could in principle wait forever. This wraps fetch() with an
+  // AbortController so the client always gives up on its own, a little
+  // after the matching server-side ceiling, rather than hanging.
+  async fetchWithTimeout(url, options, timeoutMs) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await fetch(url, { ...options, signal: controller.signal });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   // Relayed through api/places.js (which races several Overpass mirrors
   // server-side) rather than calling Overpass directly from the browser.
   // Direct-from-phone calls kept failing in ways that couldn't be
@@ -147,11 +164,11 @@ class App extends React.Component {
   // means a future failure can be reproduced by hitting that endpoint
   // directly instead of being invisible.
   async fetchOverpass(query) {
-    const res = await fetch("/api/places", {
+    const res = await this.fetchWithTimeout("/api/places", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ query }),
-    });
+    }, 35000);
     if (!res.ok) {
       let detail = "";
       try { const j = await res.json(); if (j.detail) detail = " (" + j.detail.join("; ") + ")"; } catch (e) {}
@@ -209,11 +226,11 @@ class App extends React.Component {
   // with Overpass (see api/places.js) applies here too, since Nominatim's
   // usage policy also requires one.
   async reverseGeocode(lat, lon) {
-    const r = await fetch("/api/geocode", {
+    const r = await this.fetchWithTimeout("/api/geocode", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ mode: "reverse", lat, lon }),
-    });
+    }, 20000);
     const j = await r.json();
     const a = j.address || {};
     const name = a.neighbourhood || a.suburb || a.quarter || a.city_district || a.town || a.village || a.city || a.county || "Your location";
@@ -221,11 +238,11 @@ class App extends React.Component {
     return city && name !== city ? `${name}, ${city}` : name;
   }
   async geocode(query) {
-    const r = await fetch("/api/geocode", {
+    const r = await this.fetchWithTimeout("/api/geocode", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ mode: "search", query }),
-    });
+    }, 20000);
     const j = await r.json();
     if (!Array.isArray(j) || !j.length) return null;
     const hit = j[0];
@@ -240,11 +257,11 @@ class App extends React.Component {
   // in a different town.
   async geocodeNear(name, lat, lon) {
     try {
-      const r = await fetch("/api/geocode", {
+      const r = await this.fetchWithTimeout("/api/geocode", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ mode: "search", query: name, lat, lon }),
-      });
+      }, 20000);
       const j = await r.json();
       if (!Array.isArray(j) || !j.length) return null;
       return { lat: parseFloat(j[0].lat), lon: parseFloat(j[0].lon) };
@@ -397,7 +414,7 @@ class App extends React.Component {
       const lang = i === -1 ? "en" : wiki.slice(0, i);
       const title = i === -1 ? wiki : wiki.slice(i + 1);
       if (!title) return null;
-      const r = await fetch(`https://${lang}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`);
+      const r = await this.fetchWithTimeout(`https://${lang}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`, {}, 10000);
       if (!r.ok) return null;
       const j = await r.json();
       return (j.thumbnail && j.thumbnail.source) || null;
@@ -405,11 +422,11 @@ class App extends React.Component {
   }
   async fetchGooglePhoto(name, lat, lon) {
     try {
-      const r = await fetch("/api/photo", {
+      const r = await this.fetchWithTimeout("/api/photo", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ name, lat, lon }),
-      });
+      }, 25000);
       if (!r.ok) return null;
       const j = await r.json();
       return j.photo || null;
@@ -442,11 +459,11 @@ class App extends React.Component {
     patch({ expanding: true, expandError: false });
     const prompt = `Write a genuinely informative description of "${place.name}" (a ${place.type}) near ${loc}. 2-4 short paragraphs of real, specific prose: history or origin, what actually survives or is there today, and anything practically useful to know (access, opening days, ownership) if relevant. Plain prose only — no headings, no bullet points, no markdown, no meta-commentary about the search itself, and don't just repeat the place's name as an opener. If you don't have reliable specific knowledge of this exact place, say so plainly in one short line rather than inventing detail.`;
     try {
-      const res = await fetch("/api/recommend", {
+      const res = await this.fetchWithTimeout("/api/recommend", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ prompt }),
-      });
+      }, 65000);
       if (!res.ok) throw new Error("expand failed: " + res.status);
       const { raw } = await res.json();
       patch({ text: (raw || "").trim(), expanding: false, expanded: true });
@@ -509,11 +526,11 @@ Return ONLY this JSON shape, no markdown fences:
 be used, plus 2 spares in case any fail to look up on a map afterwards).`;
 
     try {
-      const res = await fetch("/api/recommend", {
+      const res = await this.fetchWithTimeout("/api/recommend", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ prompt }),
-      });
+      }, 65000);
       if (!res.ok) throw new Error("recommend request failed: " + res.status);
       const { raw } = await res.json();
       const m = raw.match(/\{[\s\S]*\}/);
@@ -592,11 +609,11 @@ your street" framing, don't talk to them ("you")).
 Return ONLY this JSON shape, no markdown fences: {"name":"...","category":"...","type":"...","text":"..."}`;
 
     try {
-      const res = await fetch("/api/recommend", {
+      const res = await this.fetchWithTimeout("/api/recommend", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ prompt }),
-      });
+      }, 65000);
       if (!res.ok) throw new Error("replace request failed: " + res.status);
       const { raw } = await res.json();
       const m = raw.match(/\{[\s\S]*\}/);
@@ -658,11 +675,11 @@ Return ONLY this JSON shape, no markdown fences: {"name":"...","category":"...",
     };
     if (!photoDataUrl) { this.setState({ whats: "result", whatsResult: fallback }); return; }
     try {
-      const res = await fetch("/api/identify", {
+      const res = await this.fetchWithTimeout("/api/identify", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ imageDataUrl: photoDataUrl, location: loc }),
-      });
+      }, 35000);
       if (!res.ok) throw new Error("identify request failed: " + res.status);
       const r = await res.json();
       if (!r.title || !Array.isArray(r.facts)) throw new Error("unexpected response shape");
