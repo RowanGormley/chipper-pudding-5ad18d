@@ -59,6 +59,7 @@ class App extends React.Component {
       recsIntro: "",
       recsLoading: false,
       recsError: null,
+      replacing: false,
       selected: null,
       editor: null,
       locDraft: "",
@@ -472,6 +473,71 @@ Return ONLY this JSON shape, no markdown fences — "name" must be copied EXACTL
       const recs = this.fallbackRecs();
       this.setState({ recs, recsIntro: "", recsLoading: false });
       this.attachPhotos(recs);
+    }
+  }
+
+  // Drops a disliked recommendation and fetches exactly one replacement
+  // from the remaining eligible candidates (excluding everything already
+  // shown, including the one just dismissed), keeping the list at 5.
+  async replaceRec(placeId) {
+    const s = this.state;
+    const outgoing = (s.recs || []).find(p => p.id === placeId);
+    const kept = (s.recs || []).filter(p => p.id !== placeId);
+    this.setState({ recs: kept, replacing: true });
+
+    const usedIds = new Set(kept.map(p => p.id));
+    if (outgoing) usedIds.add(outgoing.id);
+    const candidates = this.eligible().filter(p => !usedIds.has(p.id));
+    if (!candidates.length) { this.setState({ replacing: false }); return; }
+
+    const finish = (pick) => {
+      this.setState(st => ({ recs: [...(st.recs || []), pick], replacing: false }));
+      this.attachPhotos([pick]);
+    };
+    const bestFallback = () => {
+      const ranked = candidates.map(p => ({ p, score: this.matchScore(p) })).sort((a, b) => (b.score - a.score) || (a.p.walkMins - b.p.walkMins));
+      const next = ranked[0] && ranked[0].p;
+      return next ? { ...next, text: next.blurb || `${next.type}${next.area ? " in " + next.area : ""}, about ${next.walkMins} min on foot.` } : null;
+    };
+
+    if (!CONFIG.aiPersonalization) {
+      const pick = bestFallback();
+      if (pick) finish(pick); else this.setState({ replacing: false });
+      return;
+    }
+
+    const list = candidates.map(p => ({ name: p.name, type: p.type, category: p.category, tags: p.tags, walkMins: p.walkMins, openingHours: p.hoursLabel || null }));
+    const prompt = `Already recommended, near ${s.location || "this area"}: ${kept.map(p => p.name).join(", ") || "nothing yet"}.
+${outgoing ? `They didn't want "${outgoing.name}" (a ${outgoing.type}) — if a genuinely good option exists, prefer something different in kind from it.` : ""}
+
+Candidate places (JSON, openingHours is raw OSM opening_hours syntax or null):
+${JSON.stringify(list)}
+
+Pick the SINGLE most interesting one to add to the list above. Don't repeat anything already
+recommended. "text": ONE short, factual, information-dense sentence in this register: "12th-
+century motte-and-bailey ruin with a striking keep, right in town." No "right up your street"
+framing, don't talk to them ("you").
+Return ONLY this JSON shape, no markdown fences — "name" must be copied EXACTLY as given above:
+{"name":"...","text":"..."}`;
+
+    try {
+      const res = await fetch("/api/recommend", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ prompt }),
+      });
+      if (!res.ok) throw new Error("replace request failed: " + res.status);
+      const { raw } = await res.json();
+      const m = raw.match(/\{[\s\S]*\}/);
+      const parsed = JSON.parse(m ? m[0] : raw);
+      const norm = x => String(x || "").toLowerCase().trim();
+      const match = candidates.find(p => norm(p.name) === norm(parsed.name));
+      if (!match) throw new Error("no name match");
+      finish({ ...match, text: parsed.text || match.blurb || "" });
+    } catch (e) {
+      console.warn("replaceRec failed, using fallback", e);
+      const pick = bestFallback();
+      if (pick) finish(pick); else this.setState({ replacing: false });
     }
   }
 
@@ -891,7 +957,12 @@ Return ONLY this JSON shape, no markdown fences — "name" must be copied EXACTL
             )}
             {cards.map(c => (
               <div key={c.id} style={{ marginBottom: 22 }}>
-                <h3 className="press" style={{ "--press-scale": 0.98, cursor: "pointer", fontFamily: "'Fredoka'", fontWeight: 600, fontSize: 19, margin: 0, color: "#1a1a22", letterSpacing: "-0.01em", display: "inline-block" }} onClick={c.onClick}>{c.name}</h3>
+                <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
+                  <h3 className="press" style={{ "--press-scale": 0.98, cursor: "pointer", fontFamily: "'Fredoka'", fontWeight: 600, fontSize: 19, margin: 0, color: "#1a1a22", letterSpacing: "-0.01em" }} onClick={c.onClick}>{c.name}</h3>
+                  <button className="press" style={{ "--press-scale": 0.9, flexShrink: 0, cursor: "pointer", border: "none", background: "#f4ede1", color: "#9a9082", width: 26, height: 26, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", marginTop: 2 }} onClick={() => this.replaceRec(c.id)} aria-label="Not interested, show something else">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
+                  </button>
+                </div>
                 <div style={{ fontFamily: "'DM Mono'", fontSize: 11.5, color: "#b5ab9a", margin: "3px 0 8px" }}>{c.metaLine}</div>
                 <p style={{ fontFamily: "'Hanken Grotesk'", fontSize: 15.5, lineHeight: 1.6, color: "#4b463d", margin: "0 0 8px" }}>{c.text}</p>
                 <button className="press" style={{ "--press-scale": 0.96, cursor: "pointer", border: "none", background: "none", padding: 0, display: "inline-flex", alignItems: "center", gap: 4, fontFamily: "'DM Mono'", fontWeight: 500, fontSize: 12, color: "#ec6a1f", letterSpacing: "0.03em" }} onClick={c.onClick}>
@@ -899,6 +970,12 @@ Return ONLY this JSON shape, no markdown fences — "name" must be copied EXACTL
                 </button>
               </div>
             ))}
+            {s.replacing && (
+              <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "0 0 22px", color: "#9a9082", fontFamily: "'DM Mono'", fontSize: 13 }}>
+                <div style={{ width: 16, height: 16, border: "2.5px solid #f0e6d6", borderTopColor: "#ec6a1f", borderRadius: "50%", animation: "ff-spin 0.8s linear infinite" }} />
+                Finding something else…
+              </div>
+            )}
             <div style={{ textAlign: "center", fontFamily: "'DM Mono'", fontSize: 11, color: "#b5ab9a", padding: "8px 0 4px" }}>
               {s.category === "All" ? `${allRecs.length} picks · tuned to your taste` : `${cards.length} in ${s.category}`}
             </div>
