@@ -48,7 +48,13 @@ export default async function handler(req, res) {
         // final response mid-JSON.
         max_tokens: 4096,
         messages: [{ role: "user", content: prompt }],
-        tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 5 }],
+        // Vercel's free plan hard-caps function duration at 60s (see
+        // maxDuration above) and a real request measured at ~37s with up to
+        // 5 searches allowed - occasionally over 60s and getting killed by
+        // the platform, silently tipping into the fallback. Capping at 3
+        // trades a little research depth for staying reliably under that
+        // ceiling; there's no further headroom to buy without a paid plan.
+        tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 3 }],
       }),
     });
 
