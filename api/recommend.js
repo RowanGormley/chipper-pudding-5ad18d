@@ -1,13 +1,18 @@
-// Vercel serverless function. Calls Claude's text API to pick and describe
-// the most interesting candidate places. Runs server-side only, so the
-// ANTHROPIC_API_KEY environment variable is never exposed to the browser.
-// See api/identify.js for the sibling endpoint that handles the camera scan.
+// Vercel serverless function. Calls Claude's text API with web search
+// enabled to pick and describe genuinely good, current places — not
+// restricted to a pre-fetched map-data candidate list (that approach kept
+// missing well-known attractions depending on how they happened to be
+// tagged in OpenStreetMap, and had no access to real opening-hours/status
+// info). Runs server-side only, so the ANTHROPIC_API_KEY environment
+// variable is never exposed to the browser. See api/identify.js for the
+// sibling endpoint that handles the camera scan.
 //
-// A real request with a full candidate list measured at ~8s — close enough
-// to Vercel's 10s default function timeout that it was intermittently
-// getting killed mid-flight, silently tipping the app into its fallback
-// text. maxDuration raises that ceiling explicitly.
-export const config = { maxDuration: 30 };
+// A plain (non-search) request with a full candidate list previously
+// measured at ~8s, close enough to Vercel's 10s default function timeout
+// that it was intermittently getting killed mid-flight. Web search adds
+// further round-trips on top of that, so the ceiling is raised well past
+// both.
+export const config = { maxDuration: 60 };
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -37,8 +42,9 @@ export default async function handler(req, res) {
       },
       body: JSON.stringify({
         model: "claude-sonnet-5",
-        max_tokens: 1200,
+        max_tokens: 1500,
         messages: [{ role: "user", content: prompt }],
+        tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 5 }],
       }),
     });
 
@@ -49,7 +55,10 @@ export default async function handler(req, res) {
     }
 
     const data = await anthropicRes.json();
-    const raw = (data.content || []).map(b => b.text || "").join("");
+    // With web search enabled, content can include tool_use/tool_result/
+    // server_tool_use blocks interleaved with the final answer — only the
+    // actual text blocks are the response we want.
+    const raw = (data.content || []).filter(b => b.type === "text").map(b => b.text || "").join("");
     res.status(200).json({ raw });
   } catch (err) {
     res.status(500).json({ error: "Unexpected error", detail: String(err) });

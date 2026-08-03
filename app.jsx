@@ -204,8 +204,16 @@ class App extends React.Component {
     return out.slice(0, 60);
   }
 
+  // Relayed through api/geocode.js rather than calling Nominatim directly
+  // from the browser — the same missing-User-Agent issue already found
+  // with Overpass (see api/places.js) applies here too, since Nominatim's
+  // usage policy also requires one.
   async reverseGeocode(lat, lon) {
-    const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=14&addressdetails=1&lat=${lat}&lon=${lon}`);
+    const r = await fetch("/api/geocode", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ mode: "reverse", lat, lon }),
+    });
     const j = await r.json();
     const a = j.address || {};
     const name = a.neighbourhood || a.suburb || a.quarter || a.city_district || a.town || a.village || a.city || a.county || "Your location";
@@ -213,14 +221,63 @@ class App extends React.Component {
     return city && name !== city ? `${name}, ${city}` : name;
   }
   async geocode(query) {
-    const r = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&addressdetails=1&q=${encodeURIComponent(query)}`);
+    const r = await fetch("/api/geocode", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ mode: "search", query }),
+    });
     const j = await r.json();
-    if (!j.length) return null;
+    if (!Array.isArray(j) || !j.length) return null;
     const hit = j[0];
     const a = hit.address || {};
     const name = a.neighbourhood || a.suburb || a.city || a.town || a.village || (hit.display_name || query).split(",")[0];
     const city = a.city || a.town || a.village || "";
     return { lat: parseFloat(hit.lat), lon: parseFloat(hit.lon), name: city && name !== city ? `${name}, ${city}` : name };
+  }
+  // Geocodes a place NAME scoped near a given point (via api/geocode.js's
+  // bounded viewbox), used to turn Claude's free-text recommendations back
+  // into map coordinates without accidentally matching a same-named place
+  // in a different town.
+  async geocodeNear(name, lat, lon) {
+    try {
+      const r = await fetch("/api/geocode", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ mode: "search", query: name, lat, lon }),
+      });
+      const j = await r.json();
+      if (!Array.isArray(j) || !j.length) return null;
+      return { lat: parseFloat(j[0].lat), lon: parseFloat(j[0].lon) };
+    } catch (e) { return null; }
+  }
+  // Turns Claude's named picks ({name, category, type, text}) into full
+  // place objects with real coordinates, by geocoding each one near the
+  // user's location and computing the actual walking distance ourselves
+  // rather than trusting Claude's own sense of distance. Drops anything
+  // that geocodes wildly further away than asked for (a likely mismatch
+  // to a same-named place) or that fails to geocode at all.
+  async geocodePicks(picks) {
+    if (!this.coords) return [];
+    const { lat, lon } = this.coords;
+    const maxWalk = Math.max(this.state.walkMins * 2.5, 30);
+    const results = await Promise.allSettled(picks.map(async pk => {
+      if (!pk || !pk.name) return null;
+      const g = await this.geocodeNear(pk.name, lat, lon);
+      if (!g) return null;
+      const meters = this.distMeters(lat, lon, g.lat, g.lon);
+      const walkMins = Math.max(1, Math.round(meters / 80));
+      if (walkMins > maxWalk) return null;
+      const category = CATS.includes(pk.category) ? pk.category : "Culture";
+      const type = pk.type || category;
+      return {
+        id: "geo/" + encodeURIComponent(pk.name.toLowerCase()),
+        name: pk.name, category, type, tags: [],
+        walkMins, meters, lat: g.lat, lon: g.lon, area: "",
+        hoursLabel: "", caption: type.toLowerCase(), blurb: "", website: "", wiki: "",
+        text: pk.text || "",
+      };
+    }));
+    return results.filter(r => r.status === "fulfilled" && r.value).map(r => r.value);
   }
 
   // ---------- top-level flow ----------
@@ -411,38 +468,42 @@ class App extends React.Component {
     }
 
     const s = this.state;
-    const list = this.eligible().map(p => ({ name: p.name, type: p.type, category: p.category, tags: p.tags, walkMins: p.walkMins, openingHours: p.hoursLabel || null }));
-    const prompt = `What's interesting to see or do at this location — ${s.location || "the traveller's location"} — right now?
+    // Deliberately NOT restricted to the map-data candidate list (this.PLACES)
+    // the way this used to work — that approach could only ever surface what
+    // happened to be tagged in a matching way in OpenStreetMap, which kept
+    // missing genuinely famous local landmarks (e.g. a pier tagged in a way
+    // the search never checked) and had no way to know real current opening
+    // status. Claude is asked directly, with web search enabled server-side,
+    // for real knowledge of the area; its picks are geocoded afterwards
+    // (see geocodePicks) purely to get map coordinates for the UI.
+    const prompt = `What's genuinely interesting to see or do within about ${s.walkMins} minutes' walk of ${s.location || "this location"} right now?
 
 Time: ${this.weekday(s.clock)} ${s.period}, about ${this.fmtTime(s.clock)}
-Max walk: ${s.walkMins} minutes
 They LIKE: ${s.likes.join(", ")}
 They DISLIKE: ${s.dislikes.join(", ")}
 
-Candidate places (JSON, openingHours is raw OSM opening_hours syntax or null):
-${JSON.stringify(list)}
+Use real, current knowledge of this specific area, including web search if it helps — genuinely
+well-known local landmarks and attractions, not just what a generic map database happens to have
+tagged. Take real opening hours/current status into account for right now where you can find it;
+avoid recommending somewhere likely closed. Favour their likes; avoid anything clashing with
+dislikes.
 
-From these candidates, pick the 5 most interesting and rank them best-first. Write like a
-knowledgeable local guide giving a real, informative answer — the way you'd naturally reply
-to this question in conversation, not like ad copy.
-Rules:
-- Aim for a good MIX, not five of the same category — ideally something historic/cultural,
-  something shopping-related, something food-or-drink-related, and something a bit quirky
-  or unusual, plus one more free pick. Only include a category if there's a genuinely decent
-  candidate for it — don't force a weak pick just for variety, and don't pad with filler if
-  fewer than 5 candidates are actually worth recommending.
-- If openingHours is given, prefer places likely OPEN at the current time; avoid ones likely closed.
-- Favour their likes; avoid anything clashing with dislikes.
-- "intro": one short sentence setting up the answer (don't list place names in it).
-- "text": ONE short, factual, information-dense sentence per place — the way a knowledgeable
-  local would describe it in a single breath, not a sales pitch. Lead with concretely what it
-  IS (era, type, distinguishing feature) rather than why they'd personally like it. No "right
+Pick the 5 best, aiming for a good MIX — ideally something historic/cultural, something
+shopping-related, something food-or-drink-related, something a bit quirky or unusual, plus one
+more free pick — but only include a category if there's a genuinely good option, don't force a
+weak pick just for variety.
+
+For each, give:
+- "name": its exact, correctly-spelled real name (needed to look it up on a map afterwards)
+- "category": exactly one of ${CATS.filter(c => c !== "All").join(", ")}
+- "type": a short 1-3 word label, e.g. "Pier", "Museum", "Pub"
+- "text": ONE short, factual, information-dense sentence — the way a knowledgeable local would
+  describe it in a single breath, not a sales pitch. Lead with concretely what it IS. No "right
   up your street" style framing, don't talk to them ("you"), and don't repeat the same sentence
-  shape across entries. Don't repeat the place's name inside "text", it's shown as a heading
-  above it. Match this register exactly, e.g. for a castle: "12th-century motte-and-bailey
-  ruin with a striking keep, right in town."
-Return ONLY this JSON shape, no markdown fences — "name" must be copied EXACTLY as given above:
-{"intro":"...","places":[{"name":"...","text":"..."}]} — exactly 5 entries in "places".`;
+  shape across entries. Match this register exactly, e.g. for a castle: "12th-century
+  motte-and-bailey ruin with a striking keep, right in town."
+Return ONLY this JSON shape, no markdown fences:
+{"intro":"one short sentence setting up the answer, no place names in it","places":[{"name":"...","category":"...","type":"...","text":"..."}]} — exactly 5 entries in "places".`;
 
     try {
       const res = await fetch("/api/recommend", {
@@ -455,18 +516,9 @@ Return ONLY this JSON shape, no markdown fences — "name" must be copied EXACTL
       const m = raw.match(/\{[\s\S]*\}/);
       const parsed = JSON.parse(m ? m[0] : raw);
       const picks = Array.isArray(parsed.places) ? parsed.places : [];
-      // Match by name rather than the opaque OSM id: an LLM reliably echoes
-      // back a place name it just reasoned about in plain text, but is far
-      // more likely to mangle or drop a compound id like "way/123456789",
-      // which used to silently tip this into the fallback below.
-      const norm = x => String(x || "").toLowerCase().trim();
-      const byName = Object.fromEntries(this.PLACES.map(p => [norm(p.name), p]));
-      const recs = picks.map(pk => {
-        const match = byName[norm(pk.name)];
-        return match ? { ...match, text: pk.text || match.blurb || "" } : null;
-      }).filter(Boolean).slice(0, 5);
-      if (recs.length < 3) throw new Error("too few");
-      this.setState({ recs, recsIntro: parsed.intro || "", recsLoading: false });
+      const recs = await this.geocodePicks(picks);
+      if (recs.length < 3) throw new Error("too few after geocoding");
+      this.setState({ recs: recs.slice(0, 5), recsIntro: parsed.intro || "", recsLoading: false });
       this.attachPhotos(recs);
     } catch (e) {
       console.warn("AI recs failed, using fallback", e);
@@ -476,49 +528,47 @@ Return ONLY this JSON shape, no markdown fences — "name" must be copied EXACTL
     }
   }
 
-  // Drops a disliked recommendation and fetches exactly one replacement
-  // from the remaining eligible candidates (excluding everything already
-  // shown, including the one just dismissed), keeping the list at 5.
+  // Drops a disliked recommendation and fetches exactly one replacement,
+  // keeping the list at 5. Asks Claude directly (same reasoning as
+  // buildRecs() above) rather than restricting it to leftover map-data
+  // candidates; falls back to the deterministic tag-matching pick from the
+  // map-data pool (this.eligible()) if that fails.
   async replaceRec(placeId) {
     const s = this.state;
     const outgoing = (s.recs || []).find(p => p.id === placeId);
     const kept = (s.recs || []).filter(p => p.id !== placeId);
     this.setState({ recs: kept, replacing: true });
 
-    const usedIds = new Set(kept.map(p => p.id));
-    if (outgoing) usedIds.add(outgoing.id);
-    const candidates = this.eligible().filter(p => !usedIds.has(p.id));
-    if (!candidates.length) { this.setState({ replacing: false }); return; }
-
     const finish = (pick) => {
       this.setState(st => ({ recs: [...(st.recs || []), pick], replacing: false }));
       this.attachPhotos([pick]);
     };
     const bestFallback = () => {
+      const usedIds = new Set(kept.map(p => p.id));
+      if (outgoing) usedIds.add(outgoing.id);
+      const candidates = this.eligible().filter(p => !usedIds.has(p.id));
       const ranked = candidates.map(p => ({ p, score: this.matchScore(p) })).sort((a, b) => (b.score - a.score) || (a.p.walkMins - b.p.walkMins));
       const next = ranked[0] && ranked[0].p;
       return next ? { ...next, text: next.blurb || `${next.type}${next.area ? " in " + next.area : ""}, about ${next.walkMins} min on foot.` } : null;
     };
 
-    if (!CONFIG.aiPersonalization) {
+    if (!CONFIG.aiPersonalization || !this.coords) {
       const pick = bestFallback();
       if (pick) finish(pick); else this.setState({ replacing: false });
       return;
     }
 
-    const list = candidates.map(p => ({ name: p.name, type: p.type, category: p.category, tags: p.tags, walkMins: p.walkMins, openingHours: p.hoursLabel || null }));
-    const prompt = `Already recommended, near ${s.location || "this area"}: ${kept.map(p => p.name).join(", ") || "nothing yet"}.
+    const prompt = `Already recommended, within about ${s.walkMins} minutes' walk of ${s.location || "this area"}: ${kept.map(p => p.name).join(", ") || "nothing yet"}.
 ${outgoing ? `They didn't want "${outgoing.name}" (a ${outgoing.type}) — if a genuinely good option exists, prefer something different in kind from it.` : ""}
 
-Candidate places (JSON, openingHours is raw OSM opening_hours syntax or null):
-${JSON.stringify(list)}
-
-Pick the SINGLE most interesting one to add to the list above. Don't repeat anything already
-recommended. "text": ONE short, factual, information-dense sentence in this register: "12th-
-century motte-and-bailey ruin with a striking keep, right in town." No "right up your street"
-framing, don't talk to them ("you").
-Return ONLY this JSON shape, no markdown fences — "name" must be copied EXACTLY as given above:
-{"name":"...","text":"..."}`;
+Use real, current knowledge of this specific area, including web search if it helps. Pick the
+SINGLE most interesting genuine place to add to the list above, within about ${s.walkMins}
+minutes' walk. Don't repeat anything already recommended.
+Give "name" (exact, correctly-spelled real name), "category" (exactly one of ${CATS.filter(c => c !== "All").join(", ")}),
+"type" (short 1-3 word label), and "text" (ONE short, factual, information-dense sentence in this
+register: "12th-century motte-and-bailey ruin with a striking keep, right in town." No "right up
+your street" framing, don't talk to them ("you")).
+Return ONLY this JSON shape, no markdown fences: {"name":"...","category":"...","type":"...","text":"..."}`;
 
     try {
       const res = await fetch("/api/recommend", {
@@ -530,10 +580,9 @@ Return ONLY this JSON shape, no markdown fences — "name" must be copied EXACTL
       const { raw } = await res.json();
       const m = raw.match(/\{[\s\S]*\}/);
       const parsed = JSON.parse(m ? m[0] : raw);
-      const norm = x => String(x || "").toLowerCase().trim();
-      const match = candidates.find(p => norm(p.name) === norm(parsed.name));
-      if (!match) throw new Error("no name match");
-      finish({ ...match, text: parsed.text || match.blurb || "" });
+      const recs = await this.geocodePicks([parsed]);
+      if (!recs.length) throw new Error("geocode failed");
+      finish(recs[0]);
     } catch (e) {
       console.warn("replaceRec failed, using fallback", e);
       const pick = bestFallback();
